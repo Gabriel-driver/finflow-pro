@@ -54,6 +54,10 @@ export default function Settings() {
             <input value={form.userName} onChange={e => setForm({ ...form, userName: e.target.value })} className={inputClass} />
           </div>
           <div>
+            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nome do Sistema</label>
+            <input value={form.systemName || ""} onChange={e => setForm({ ...form, systemName: e.target.value })} className={inputClass} />
+          </div>
+          <div>
             <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Email</label>
             <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputClass} />
           </div>

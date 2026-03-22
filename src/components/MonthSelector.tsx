@@ -26,6 +26,7 @@ export function MonthSelector({ currentDate, onPrev, onNext }: MonthSelectorProp
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useMonthNav(initial?: Date) {
   const [currentDate, setCurrentDate] = useState(initial || new Date());
   const monthKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}`;

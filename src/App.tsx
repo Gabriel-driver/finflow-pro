@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { RouterProvider, createBrowserRouter } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,33 +20,109 @@ import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+      refetchOnMount: false,
+    },
+  },
+});
+
+const router = createBrowserRouter(
+  [
+    { path: '/login', element: <Login /> },
+    { path: '/', element: <ProtectedRoute><Dashboard /></ProtectedRoute> },
+    { path: '/accounts', element: <ProtectedRoute><Accounts /></ProtectedRoute> },
+    { path: '/transactions', element: <ProtectedRoute><Transactions /></ProtectedRoute> },
+    { path: '/categories', element: <ProtectedRoute><Categories /></ProtectedRoute> },
+    { path: '/goals', element: <ProtectedRoute><Goals /></ProtectedRoute> },
+    { path: '/credit-cards', element: <ProtectedRoute><CreditCards /></ProtectedRoute> },
+    { path: '/monthly-plan', element: <ProtectedRoute><MonthlyPlan /></ProtectedRoute> },
+    { path: '/notifications', element: <ProtectedRoute><Notifications /></ProtectedRoute> },
+    { path: '/settings', element: <ProtectedRoute><Settings /></ProtectedRoute> },
+    { path: '/reports', element: <ProtectedRoute><Reports /></ProtectedRoute> },
+    { path: '/budgets', element: <ProtectedRoute><Budgets /></ProtectedRoute> },
+    { path: '/admin', element: <ProtectedRoute adminOnly><Admin /></ProtectedRoute> },
+    { path: '*', element: <NotFound /> },
+  ],
+  {
+    future: {
+      v7_startTransition: true,
+      v7_relativeSplatPath: true,
+    },
+  }
+);
+
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <FinanceProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/accounts" element={<ProtectedRoute><Accounts /></ProtectedRoute>} />
-            <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
-            <Route path="/categories" element={<ProtectedRoute><Categories /></ProtectedRoute>} />
-            <Route path="/goals" element={<ProtectedRoute><Goals /></ProtectedRoute>} />
-            <Route path="/credit-cards" element={<ProtectedRoute><CreditCards /></ProtectedRoute>} />
-            <Route path="/monthly-plan" element={<ProtectedRoute><MonthlyPlan /></ProtectedRoute>} />
-            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-            <Route path="/budgets" element={<ProtectedRoute><Budgets /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </FinanceProvider>
+      <Toaster />
+      <Sonner />
+      {/* Só monta o FinanceProvider nas rotas protegidas */}
+      <RouterProvider
+        router={createBrowserRouter([
+          { path: '/login', element: <Login /> },
+          {
+            element: <FinanceProvider><ProtectedRoute><Dashboard /></ProtectedRoute></FinanceProvider>,
+            path: '/',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Accounts /></ProtectedRoute></FinanceProvider>,
+            path: '/accounts',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Transactions /></ProtectedRoute></FinanceProvider>,
+            path: '/transactions',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Categories /></ProtectedRoute></FinanceProvider>,
+            path: '/categories',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Goals /></ProtectedRoute></FinanceProvider>,
+            path: '/goals',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><CreditCards /></ProtectedRoute></FinanceProvider>,
+            path: '/credit-cards',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><MonthlyPlan /></ProtectedRoute></FinanceProvider>,
+            path: '/monthly-plan',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Notifications /></ProtectedRoute></FinanceProvider>,
+            path: '/notifications',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Settings /></ProtectedRoute></FinanceProvider>,
+            path: '/settings',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Reports /></ProtectedRoute></FinanceProvider>,
+            path: '/reports',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><Budgets /></ProtectedRoute></FinanceProvider>,
+            path: '/budgets',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute adminOnly><Admin /></ProtectedRoute></FinanceProvider>,
+            path: '/admin',
+          },
+          { path: '*', element: <NotFound /> },
+        ], {
+          future: {
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          },
+        })}
+      />
     </TooltipProvider>
   </QueryClientProvider>
 );

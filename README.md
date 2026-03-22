@@ -47,6 +47,27 @@ npm start
 npm run build
 ```
 
+## 🧪 Testes
+
+### Testes Unitários
+```bash
+npm test
+```
+
+### Testes E2E (Playwright)
+```bash
+# Instalar browsers do Playwright (primeira vez)
+npx playwright install
+
+# Executar testes E2E
+npm run test:e2e
+
+# Executar com interface visual
+npm run test:e2e:ui
+```
+
+**Nota:** Os testes E2E requerem que o servidor esteja rodando. Execute `npm run dev` em um terminal separado antes de rodar os testes.
+
 ## 📁 Estrutura do projeto
 
 - `src/`: Código fonte do frontend (React + TypeScript)

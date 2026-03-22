@@ -80,6 +80,7 @@ export interface Settings {
   alertDaysBefore: number;
   monthlyBudget: number;
   darkMode: boolean;
+  systemName: string;
 }
 
 // Helpers
@@ -87,10 +88,35 @@ export function formatCurrency(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
-const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3000/api';
+const API_BASE = '/api';
+
+export const getToken = () => sessionStorage.getItem('token') || localStorage.getItem('token');
+export const getUser = () => {
+  const userStr = sessionStorage.getItem('user') || localStorage.getItem('user');
+  if (!userStr) return null;
+  try {
+    return JSON.parse(userStr);
+  } catch {
+    return null;
+  }
+};
+
+export const setAuthSession = (token: string, user: unknown) => {
+  sessionStorage.setItem('token', token);
+  sessionStorage.setItem('user', JSON.stringify(user));
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+};
+
+export const clearAuth = () => {
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('user');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+};
 
 const getAuthHeaders = (isJson = true) => {
-  const token = localStorage.getItem('token');
+  const token = getToken();
   const headers: Record<string, string> = {};
   if (isJson) headers['Content-Type'] = 'application/json';
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -99,8 +125,7 @@ const getAuthHeaders = (isJson = true) => {
 
 const handleUnauthorized = async (res: Response) => {
   if (res.status === 401 || res.status === 403) {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearAuth();
     window.location.href = '/login';
     throw new Error('Sessão expirada. Faça login novamente.');
   }
@@ -228,8 +253,7 @@ const fetchSettings = async (): Promise<Settings> => {
     notificationsEnabled: data.notificationsEnabled ?? data.notifications_enabled ?? true,
     alertDaysBefore: data.alertDaysBefore ?? data.alert_days_before ?? 3,
     monthlyBudget: data.monthlyBudget ?? data.monthly_budget ?? 8000,
-    darkMode: data.darkMode ?? data.dark_mode ?? true,
-  };
+    darkMode: data.darkMode ?? data.dark_mode ?? true,    systemName: data.systemName || data.system_name || 'Continhas da Duda',  };
 };
 
 const fetchNotifications = async (): Promise<Notification[]> => {
@@ -335,6 +359,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       alertDaysBefore: 3,
       monthlyBudget: 8000,
       darkMode: true,
+      systemName: "Continhas da Duda",
     },
     notifications: notificationsQuery.data || [],
     isLoading: accountsQuery.isLoading || categoriesQuery.isLoading || transactionsQuery.isLoading || creditCardsQuery.isLoading || goalsQuery.isLoading || settingsQuery.isLoading || notificationsQuery.isLoading,

@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 @layer base {
   :root {
@@ -176,6 +176,107 @@ select option {
   75% { transform: translateY(-16px) rotateX(4deg) rotateY(-3deg); }
 }
 
+@keyframes keyboardWave {
+  0% { background-position: 0 0; }
+  50% { background-position: 120px 120px; }
+  100% { background-position: 0 0; }
+}
+
+@keyframes particleFloat {
+  0% { transform: translateY(0px) scale(1); opacity: 0.5; }
+  50% { transform: translateY(-10px) scale(1.2); opacity: 1; }
+  100% { transform: translateY(0px) scale(0.8); opacity: 0; }
+}
+
+.keyboard-grid {
+  animation: keyboardWave 14s linear infinite;
+  background-image: radial-gradient(circle at 50% 40%, rgba(78, 70, 235, 0.14), transparent 220px),
+    radial-gradient(circle at 20% 70%, rgba(14, 165, 233, 0.12), transparent 180px),
+    radial-gradient(circle at 80% 30%, rgba(168, 85, 247, 0.1), transparent 160px);
+  background-size: 1000px 1000px, 800px 800px, 1000px 1000px;
+}
+
+.bg-4d {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(120deg, rgba(15,23,42,0.95), rgba(30,41,59,0.88));
+}
+
+.bg-4d::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 25% 23%, rgba(59, 130, 246, 0.25), transparent 30%),
+    radial-gradient(circle at 72% 68%, rgba(99, 102, 241, 0.20), transparent 30%);
+  animation: float3d 20s ease-in-out infinite;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bg-4d > * {
+  position: relative;
+  z-index: 10;
+}
+
+.animate-4d {
+  animation: floatRotate4d 12s infinite alternate ease-in-out;
+  transform-style: preserve-3d;
+}
+
+@keyframes floatRotate4d {
+  0% { transform: translateZ(0) rotateY(0deg) rotateX(0deg) translateX(0) translateY(0); }
+  25% { transform: translateZ(8px) rotateY(3deg) rotateX(2deg) translateX(-2px) translateY(2px); }
+  50% { transform: translateZ(16px) rotateY(-3deg) rotateX(-2deg) translateX(2px) translateY(-2px); }
+  75% { transform: translateZ(8px) rotateY(2deg) rotateX(4deg) translateX(-1px) translateY(1px); }
+  100% { transform: translateZ(0) rotateY(0deg) rotateX(0deg) translateX(0) translateY(0); }
+}
+
+.particle {
+  position: absolute;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.9), rgba(6, 182, 212, 0.9));
+  animation: particleFloat 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.animate-spin-slow {
+  animation: spin 10s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-pulse {
+  animation: pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
 .animate-float-3d {
   animation: float3d 6s ease-in-out infinite;
+}
+
+@keyframes blob {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(8px, -16px) scale(1.1); }
+  66% { transform: translate(-10px, 14px) scale(0.95); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+.animate-blob {
+  animation: blob 8s ease-in-out infinite;
+}
+
+.animate-blob-slow {
+  animation: blob 10s ease-in-out infinite 0.5s;
+}
+
+.animate-blob-slower {
+  animation: blob 12s ease-in-out infinite 1s;
 }

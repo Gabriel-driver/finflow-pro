@@ -1,3 +1,16 @@
+// Endpoint para listar logs no admin
+app.get('/api/admin/logs', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (pool) {
+      const result = await pool.query('SELECT id, level, message, username, created_at FROM logs ORDER BY created_at DESC LIMIT 500');
+      res.json(result.rows);
+    } else {
+      res.json([]); // Sem logs em modo mock
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao buscar logs', details: error.message });
+  }
+});
 import express from 'express';
 import path from 'path';
 import cors from 'cors';
@@ -5,6 +18,7 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -80,7 +94,7 @@ const mockMonthlyPlans = [
 ];
 
 const mockSettings = [
-  { id: 1, user_id: 1, user_name: "Duda", email: "duda@email.com", currency: "BRL", language: "pt-BR", notifications_enabled: true, alert_days_before: 3, monthly_budget: 8000, dark_mode: true },
+  { id: 1, user_id: 1, user_name: "Duda", email: "duda@email.com", currency: "BRL", language: "pt-BR", notifications_enabled: true, alert_days_before: 3, monthly_budget: 8000, dark_mode: true, system_name: "FinFlow Pro" },
 ];
 
 const mockBudgets = [
@@ -196,13 +210,44 @@ try {
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   });
-  pool.connect((err) => {
+
+  // avoid crash on unexpected idle client error
+  pool.on('error', (err) => {
+    console.error('[POSTGRES] idle client error, falling back to mock data:', err);
+    pool = null;
+  });
+
+  pool.connect(async (err) => {
     if (err) {
       console.error('Error connecting to database:', err);
       console.log('Using mock data instead');
       pool = null; // Use mock data
-    } else {
-      console.log('Connected to database');
+      return;
+    }
+
+    console.log('Connected to database');
+
+    try {
+      const schemaPath = path.join(__dirname, 'schema.sql');
+      const schemaSql = await fs.readFile(schemaPath, 'utf8');
+      await pool.query(schemaSql);
+      console.log('Database schema ensured (schema.sql applied)');
+
+      // Optionally run an admin seed
+      const existingAdmin = await pool.query('SELECT id FROM users WHERE id = 1');
+      if (existingAdmin.rows.length === 0) {
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        await pool.query(
+          'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)',
+          ['admin', 'admin@finflow.com', hashedPassword]
+        );
+        console.log('Admin user created (admin@finflow.com / admin123)');
+      }
+    } catch (schemaError) {
+      console.error('Error initializing database schema:', schemaError);
+      addLog('ERROR', `Erro inicializando esquema: ${schemaError.message}`, 'system');
+      // fallback to mock data if cannot apply schema
+      pool = null;
     }
   });
 } catch (e) {
@@ -256,15 +301,36 @@ app.use('/api', (req, res, next) => {
 app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     console.log('[GET /api/admin/users] Processando requisição. Pool disponível:', !!pool);
-    
+
     if (pool) {
-      console.log('[GET /api/admin/users] Buscando usuários do banco');
-      const result = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY created_at DESC');
-      console.log('[GET /api/admin/users] Usuários encontrados:', result.rows.length);
-      res.json(result.rows);
+      console.log('[GET /api/admin/users] Buscando usuários do banco com configurações');
+      const result = await pool.query(
+        `SELECT u.id, u.username, u.email, u.created_at, s.system_name
+         FROM users u
+         LEFT JOIN settings s ON s.user_id = u.id
+         ORDER BY u.created_at DESC`
+      );
+      const rows = result.rows.map((row) => ({
+        id: row.id,
+        username: row.username,
+        email: row.email,
+        created_at: row.created_at,
+        systemName: row.system_name || 'FinFlow Pro',
+      }));
+      console.log('[GET /api/admin/users] Usuários encontrados:', rows.length);
+      res.json(rows);
     } else {
       console.log('[GET /api/admin/users] Pool null, usando mock data');
-      res.json(mockUsers.map(u => ({ id: u.id, username: u.username, email: u.email, created_at: new Date().toISOString() })));
+      res.json(mockUsers.map((u) => {
+        const settings = mockSettings.find((s) => s.user_id === u.id);
+        return {
+          id: u.id,
+          username: u.username,
+          email: u.email,
+          created_at: new Date().toISOString(),
+          systemName: settings?.system_name || 'FinFlow Pro',
+        };
+      }));
     }
   } catch (error) {
     console.error('[ERROR] Erro ao buscar usuários:', error);
@@ -340,6 +406,79 @@ app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, 
     res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
   }
 });
+
+app.put('/api/admin/users/:id/system-name', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const systemName = req.body.systemName || req.body.system_name || 'FinFlow Pro';
+
+    if (pool) {
+      const result = await pool.query(
+        `INSERT INTO settings (user_id, system_name)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET system_name = EXCLUDED.system_name
+         RETURNING user_id, system_name`,
+        [userId, systemName]
+      );
+      addLog('INFO', `Admin atualizou systemName do usuário ${userId} para "${systemName}"`, req.user.username);
+      return res.json({ userId: result.rows[0].user_id, systemName: result.rows[0].system_name });
+    }
+
+    const index = mockSettings.findIndex((s) => s.user_id === userId);
+    if (index >= 0) {
+      mockSettings[index].system_name = systemName;
+      addLog('INFO', `Admin atualizou systemName do mock user ${userId} para "${systemName}"`, req.user.username);
+      return res.json({ userId, systemName });
+    }
+
+    const userIndex = mockUsers.findIndex((u) => u.id === userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    mockSettings.push({
+      id: mockSettings.length + 1,
+      user_id: userId,
+      user_name: mockUsers[userIndex].username,
+      email: mockUsers[userIndex].email,
+      currency: 'BRL',
+      language: 'pt-BR',
+      notifications_enabled: true,
+      alert_days_before: 3,
+      monthly_budget: 8000,
+      dark_mode: true,
+      system_name: systemName,
+    });
+
+    addLog('INFO', `Admin criou systemName para mock user ${userId}: "${systemName}"`, req.user.username);
+    res.json({ userId, systemName });
+  } catch (error) {
+    console.error('[ERROR] Erro ao atualizar systemName do usuário:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
+  }
+});
+
+app.get('/api/admin/settings/system-name', authMiddleware, adminMiddleware, (req, res) => {
+  res.json({ systemName: defaultSystemName });
+});
+
+app.put('/api/admin/settings/system-name', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const systemName = req.body.systemName || req.body.system_name;
+    if (!systemName || systemName.trim().length === 0) {
+      return res.status(400).json({ error: 'Nome do sistema é obrigatório' });
+    }
+
+    defaultSystemName = systemName;
+    addLog('INFO', `Admin atualizou systemName global para "${systemName}"`, req.user.username);
+    res.json({ systemName: defaultSystemName });
+  } catch (error) {
+    console.error('[ERROR] Erro ao atualizar systemName global:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
+  }
+});
+
+let defaultSystemName = 'FinFlow Pro';
 
 // Logs route (simple in-memory logs for now)
 let systemLogs = [
@@ -658,7 +797,8 @@ app.get('/api/settings', async (req, res) => {
       alertDaysBefore: userSettings.alert_days_before || userSettings.alertDaysBefore,
       monthlyBudget: userSettings.monthly_budget || userSettings.monthlyBudget,
       darkMode: userSettings.dark_mode || userSettings.darkMode,
-    } : {};
+      systemName: userSettings.system_name || userSettings.systemName || defaultSystemName,
+    } : { systemName: defaultSystemName };
     res.json(response);
     return;
   }
@@ -677,6 +817,7 @@ app.get('/api/settings', async (req, res) => {
       alertDaysBefore: row.alert_days_before,
       monthlyBudget: parseFloat(row.monthly_budget),
       darkMode: row.dark_mode,
+      systemName: row.system_name || defaultSystemName,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -687,15 +828,17 @@ app.put('/api/settings', async (req, res) => {
   const userId = getUserId(req);
   if (!pool) {
     const index = mockSettings.findIndex(s => s.user_id === userId);
+    const existing = index >= 0 ? mockSettings[index] : {};
     const update = {
-      user_name: req.body.userName || req.body.user_name,
-      email: req.body.email,
-      currency: req.body.currency,
-      language: req.body.language,
-      notifications_enabled: req.body.notificationsEnabled || req.body.notifications_enabled,
-      alert_days_before: req.body.alertDaysBefore || req.body.alert_days_before,
-      monthly_budget: req.body.monthlyBudget || req.body.monthly_budget,
-      dark_mode: req.body.darkMode || req.body.dark_mode,
+      user_name: req.body.userName ?? req.body.user_name ?? existing.user_name,
+      email: req.body.email ?? existing.email,
+      currency: req.body.currency ?? existing.currency,
+      language: req.body.language ?? existing.language,
+      notifications_enabled: req.body.notificationsEnabled ?? req.body.notifications_enabled ?? existing.notifications_enabled,
+      alert_days_before: req.body.alertDaysBefore ?? req.body.alert_days_before ?? existing.alert_days_before,
+      monthly_budget: req.body.monthlyBudget ?? req.body.monthly_budget ?? existing.monthly_budget,
+      dark_mode: req.body.darkMode ?? req.body.dark_mode ?? existing.dark_mode,
+      system_name: req.body.systemName ?? req.body.system_name ?? existing.system_name,
     };
 
     if (index >= 0) {
@@ -727,6 +870,7 @@ app.put('/api/settings', async (req, res) => {
       alertDaysBefore: newSettings.alert_days_before,
       monthlyBudget: newSettings.monthly_budget,
       darkMode: newSettings.dark_mode,
+      systemName: newSettings.system_name || 'FinFlow Pro',
     });
   }
 
@@ -738,11 +882,12 @@ app.put('/api/settings', async (req, res) => {
   const alert_days_before = req.body.alertDaysBefore ?? req.body.alert_days_before;
   const monthly_budget = req.body.monthlyBudget ?? req.body.monthly_budget;
   const dark_mode = req.body.darkMode ?? req.body.dark_mode;
+  const system_name = req.body.systemName ?? req.body.system_name ?? 'FinFlow Pro';
 
   try {
     const result = await pool.query(
-      `INSERT INTO settings (user_id, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO settings (user_id, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode, system_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (user_id) DO UPDATE SET
          user_name = EXCLUDED.user_name,
          email = EXCLUDED.email,
@@ -751,9 +896,10 @@ app.put('/api/settings', async (req, res) => {
          notifications_enabled = EXCLUDED.notifications_enabled,
          alert_days_before = EXCLUDED.alert_days_before,
          monthly_budget = EXCLUDED.monthly_budget,
-         dark_mode = EXCLUDED.dark_mode
+         dark_mode = EXCLUDED.dark_mode,
+         system_name = EXCLUDED.system_name
        RETURNING *`,
-      [userId, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode]
+      [userId, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode, system_name]
     );
     const changed = result.rows[0];
     res.json({
@@ -841,8 +987,9 @@ app.use((req, res) => {
 
 // Only listen in development/local environment
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+  const serverHost = process.env.HOST || '0.0.0.0';
+  app.listen(port, serverHost, () => {
+    console.log(`Server running on ${serverHost}:${port}`);
   });
 }
 

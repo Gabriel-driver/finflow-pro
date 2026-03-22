@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Users, Plus, Trash2, LogOut, Shield, UserCheck, AlertCircle, CheckCircle } from "lucide-react";
+import { getToken, clearAuth } from "@/lib/finance-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ interface User {
   username: string;
   email: string;
   created_at: string;
+  systemName?: string;
 }
 
 interface LogEntry {
@@ -35,22 +37,22 @@ export default function Admin() {
   const [logLevel, setLogLevel] = useState<'ALL' | 'INFO' | 'WARNING' | 'ERROR'>('ALL');
   const [activeTab, setActiveTab] = useState<'users' | 'logs'>('users');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [systemNameEdits, setSystemNameEdits] = useState<Record<number, string>>({});
+  const [globalSystemName, setGlobalSystemName] = useState('FinFlow Pro');
+  const [globalSystemNameInput, setGlobalSystemNameInput] = useState('FinFlow Pro');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const showError = (error: unknown, fallback: string) => {
+  const showError = useCallback((error: unknown, fallback: string) => {
     console.error(fallback, error);
     const errText = error instanceof Error ? error.message : String(error);
     setMessage({ type: 'error', text: errText || fallback });
-  };
+  }, []);
 
-  const loadLogs = async (search = '', level = 'ALL') => {
+  const loadLogs = useCallback(async (search = '', level = 'ALL') => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       if (!token) {
+        clearAuth();
         navigate('/login');
         return;
       }
@@ -60,7 +62,7 @@ export default function Admin() {
       if (level && level !== 'ALL') query.set('level', level);
 
       const logsRes = await fetch(`/api/admin/logs?${query.toString()}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!logsRes.ok) throw new Error('Erro ao carregar logs');
@@ -69,18 +71,19 @@ export default function Admin() {
     } catch (error: unknown) {
       showError(error, 'Erro ao carregar logs do admin');
     }
-  };
+  }, [navigate, showError]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       if (!token) {
+        clearAuth();
         navigate('/login');
         return;
       }
 
       const usersRes = await fetch('/api/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (usersRes.status === 403) {
@@ -93,15 +96,36 @@ export default function Admin() {
         throw new Error('Erro ao carregar usuários');
       }
 
-      const usersData = await usersRes.json();
+      const usersData: User[] = await usersRes.json();
       setUsers(usersData);
+      setSystemNameEdits(
+        usersData.reduce((acc: Record<number, string>, user: User) => {
+          acc[user.id] = user.systemName ?? 'FinFlow Pro';
+          return acc;
+        }, {}),
+      );
+
+      const globalNameRes = await fetch('/api/admin/settings/system-name', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (globalNameRes.ok) {
+        const globalNameData = await globalNameRes.json();
+        setGlobalSystemName(globalNameData.systemName);
+        setGlobalSystemNameInput(globalNameData.systemName);
+      }
+
       await loadLogs(logSearch, logLevel);
     } catch (error: unknown) {
       showError(error, 'Erro ao carregar dados do admin');
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate, loadLogs, logSearch, logLevel, showError]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const createUser = async () => {
     if (!newUser.username || !newUser.email || !newUser.password) {
@@ -110,7 +134,7 @@ export default function Admin() {
     }
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       const response = await fetch('/api/admin/users', {
         method: 'POST',
         headers: {
@@ -138,11 +162,35 @@ export default function Admin() {
     }
   };
 
+  const updateUserSystemName = async (userId: number, systemName: string) => {
+    try {
+      const token = getToken();
+      const response = await fetch(`/api/admin/users/${userId}/system-name`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ systemName })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Erro ao atualizar nome do sistema');
+      }
+
+      setMessage({ type: 'success', text: 'Nome do sistema atualizado com sucesso!' });
+      loadData();
+    } catch (error: unknown) {
+      showError(error, 'Erro ao atualizar nome do sistema');
+    }
+  };
+
   const deleteUser = async (userId: number) => {
     if (!confirm('Tem certeza que deseja deletar este usuário?')) return;
 
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       const response = await fetch(`/api/admin/users/${userId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -160,8 +208,36 @@ export default function Admin() {
     }
   };
 
+  const updateGlobalSystemName = async () => {
+    try {
+      const token = getToken();
+      const response = await fetch('/api/admin/settings/system-name', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ systemName: globalSystemNameInput }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Erro ao atualizar nome do sistema global');
+      }
+
+      const data = await response.json();
+      setGlobalSystemName(data.systemName);
+      setMessage({ type: 'success', text: 'Nome do sistema global atualizado!' });
+    } catch (error: unknown) {
+      showError(error, 'Erro ao atualizar nome do sistema global');
+    }
+  };
+
   const logout = () => {
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     navigate('/login');
   };
 
@@ -206,6 +282,25 @@ export default function Admin() {
             <AlertDescription>{message.text}</AlertDescription>
           </Alert>
         )}
+
+        {/* Global system name */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Configuração Global do Sistema</CardTitle>
+            <CardDescription>Defina o nome padrão exibido na tela de login e no app quando usuário não personalizou.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Input
+                value={globalSystemNameInput}
+                onChange={(e) => setGlobalSystemNameInput(e.target.value)}
+                placeholder="Nome do sistema global"
+              />
+              <Button onClick={updateGlobalSystemName}>Salvar nome global</Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">Nome atual: <strong>{globalSystemName}</strong></p>
+          </CardContent>
+        </Card>
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
@@ -316,6 +411,7 @@ export default function Admin() {
                     <TableHead>Usuário</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Data de Criação</TableHead>
+                    <TableHead>Nome do Sistema</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Ações</TableHead>
                   </TableRow>
@@ -327,6 +423,18 @@ export default function Admin() {
                       <TableCell className="font-medium">{user.username}</TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell>{new Date(user.created_at).toLocaleDateString('pt-BR')}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={systemNameEdits[user.id] ?? user.systemName ?? ''}
+                            onChange={(e) => setSystemNameEdits((current) => ({ ...current, [user.id]: e.target.value }))}
+                            className="w-full px-2 py-1 text-xs border border-border rounded"
+                          />
+                          <Button size="sm" onClick={() => updateUserSystemName(user.id, systemNameEdits[user.id] ?? user.systemName ?? '')}>
+                            Salvar
+                          </Button>
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant={user.id === 1 ? "default" : "secondary"}>
                           {user.id === 1 ? "Admin" : "Usuário"}

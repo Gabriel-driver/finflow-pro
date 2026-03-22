@@ -47,7 +47,7 @@ export function NewAccountModal({ open, onOpenChange }: Props) {
           </div>
           <div>
             <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Tipo</label>
-            <select value={type} onChange={e => setType(e.target.value as any)} className={`${inputClass} appearance-none`}>
+            <select value={type} onChange={e => setType(e.target.value as "checking" | "savings" | "wallet" | "credit_card")} className={`${inputClass} appearance-none`}>
               {types.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>

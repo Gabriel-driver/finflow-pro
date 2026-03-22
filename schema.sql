@@ -1,3 +1,11 @@
+-- Logs de eventos do sistema
+CREATE TABLE IF NOT EXISTS logs (
+  id SERIAL PRIMARY KEY,
+  level VARCHAR(16) NOT NULL,
+  message TEXT NOT NULL,
+  username VARCHAR(64),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 -- Schema for FinFlow Pro
 
 -- Users table for authentication
