@@ -15,6 +15,25 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
     return <Navigate to="/login" replace />;
   }
 
+  // Verificar expiração do token JWT
+  const isTokenExpired = () => {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp && Date.now() / 1000 > payload.exp) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    return false;
+  };
+
+  if (isTokenExpired()) {
+    return <Navigate to="/login" replace />;
+  }
+
   // Se é admin only, verificar se user id é 1
   if (adminOnly) {
     try {

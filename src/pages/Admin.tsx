@@ -31,6 +31,8 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '' });
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [logSearch, setLogSearch] = useState('');
+  const [logLevel, setLogLevel] = useState<'ALL' | 'INFO' | 'WARNING' | 'ERROR'>('ALL');
   const [activeTab, setActiveTab] = useState<'users' | 'logs'>('users');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const navigate = useNavigate();
@@ -38,6 +40,36 @@ export default function Admin() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const showError = (error: unknown, fallback: string) => {
+    console.error(fallback, error);
+    const errText = error instanceof Error ? error.message : String(error);
+    setMessage({ type: 'error', text: errText || fallback });
+  };
+
+  const loadLogs = async (search = '', level = 'ALL') => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/login');
+        return;
+      }
+
+      const query = new URLSearchParams();
+      if (search) query.set('search', search);
+      if (level && level !== 'ALL') query.set('level', level);
+
+      const logsRes = await fetch(`/api/admin/logs?${query.toString()}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!logsRes.ok) throw new Error('Erro ao carregar logs');
+      const logsData = await logsRes.json();
+      setLogs(logsData);
+    } catch (error: unknown) {
+      showError(error, 'Erro ao carregar logs do admin');
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -47,14 +79,9 @@ export default function Admin() {
         return;
       }
 
-      const [usersRes, logsRes] = await Promise.all([
-        fetch('/api/admin/users', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }),
-        fetch('/api/admin/logs', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-      ]);
+      const usersRes = await fetch('/api/admin/users', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
       if (usersRes.status === 403) {
         setMessage({ type: 'error', text: 'Acesso negado - apenas admin pode acessar esta página' });
@@ -62,18 +89,15 @@ export default function Admin() {
         return;
       }
 
-      if (!usersRes.ok || !logsRes.ok) {
-        throw new Error('Erro ao carregar dados');
+      if (!usersRes.ok) {
+        throw new Error('Erro ao carregar usuários');
       }
 
       const usersData = await usersRes.json();
-      const logsData = await logsRes.json();
-
       setUsers(usersData);
-      setLogs(logsData);
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error);
-      setMessage({ type: 'error', text: 'Erro ao carregar dados do admin' });
+      await loadLogs(logSearch, logLevel);
+    } catch (error: unknown) {
+      showError(error, 'Erro ao carregar dados do admin');
     } finally {
       setLoading(false);
     }
@@ -109,8 +133,8 @@ export default function Admin() {
 
       // Reload logs to show the creation
       loadData();
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error.message });
+    } catch (error: unknown) {
+      showError(error, 'Erro ao criar usuário');
     }
   };
 
@@ -131,8 +155,8 @@ export default function Admin() {
       setUsers(users.filter(u => u.id !== userId));
       setMessage({ type: 'success', text: 'Usuário deletado com sucesso!' });
       loadData(); // Reload logs
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error.message });
+    } catch (error: unknown) {
+      showError(error, 'Erro ao excluir usuário');
     }
   };
 
@@ -198,6 +222,25 @@ export default function Admin() {
           >
             <AlertCircle className="h-4 w-4 mr-2" />
             Logs do Sistema
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4">
+          <Input
+            placeholder="Buscar logs (mensagem ou usuário)"
+            value={logSearch}
+            onChange={(e) => setLogSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') loadLogs(logSearch, logLevel); }}
+          />
+          <select value={logLevel} onChange={(e) => setLogLevel(e.target.value as 'ALL' | 'INFO' | 'WARNING' | 'ERROR')} className="h-10 px-3 border rounded-lg">
+            <option value="ALL">Todos</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <Button onClick={() => loadLogs(logSearch, logLevel)}>
+            <Users className="h-4 w-4 mr-2" />
+            Buscar logs
           </Button>
         </div>
 

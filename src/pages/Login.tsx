@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff, ArrowRight, Sparkles, DollarSign, CreditCard, PiggyBank, TrendingUp, Shield, BarChart3 } from "lucide-react";
 
 // Floating 3D icon component
-function Float3DIcon({ icon: Icon, className, style }: { icon: any; className?: string; style?: React.CSSProperties }) {
+function Float3DIcon({ icon: Icon, className, style }: { icon: React.ComponentType<{ className?: string }>; className?: string; style?: React.CSSProperties }) {
   return (
     <div className={`absolute pointer-events-none ${className}`} style={style}>
       <div className="relative animate-float-3d">
@@ -88,7 +88,7 @@ export default function Login() {
       const responseText = await response.text();
       console.log('[Login] response status', response.status, response.statusText, 'body', responseText);
 
-      let data: any = null;
+      let data: { token?: string; user?: { id?: number } } | null = null;
       try {
         data = responseText ? JSON.parse(responseText) : null;
       } catch (parseError) {

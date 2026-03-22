@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h';
 
 // Middleware
 app.use(cors());
@@ -107,7 +108,7 @@ app.post('/api/register', async (req, res) => {
       );
 
       const user = result.rows[0];
-      const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET);
+      const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
       // Log user creation
       addLog('INFO', `Novo usuário criado: ${username} (${email})`, 'admin');
@@ -137,19 +138,21 @@ app.post('/api/login', async (req, res) => {
       const user = result.rows[0];
 
       if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+        addLog('WARNING', `Tentativa de login inválida para email ${email}`, 'unknown');
         return res.status(401).json({ error: 'Credenciais inválidas' });
       }
 
-      const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET);
+      const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
       // Log login
-      addLog('INFO', `Login realizado: ${user.username} (${email})`, user.username);
+      addLog('INFO', `Login realizado com sucesso: ${user.username} (${email})`, user.username);
 
       res.json({ token, user: { id: user.id, username: user.username, email: user.email } });
     } else {
       // Mock data fallback
       const user = mockUsers.find(u => u.email === email);
       if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+        addLog('WARNING', `Tentativa de login inválida (mock) para email ${email}`, 'unknown');
         return res.status(401).json({ error: 'Credenciais inválidas' });
       }
       const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET);
@@ -175,7 +178,8 @@ const authMiddleware = (req, res, next) => {
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
       console.log('[AUTH] Invalid token:', err.message);
-      return res.status(403).json({ error: 'Token inválido' });
+      addLog('WARNING', `Autenticação falhou para ${req.path}: ${err.message}`, 'unknown');
+      return res.status(403).json({ error: 'Token inválido ou expirado' });
     }
     console.log('[AUTH] Token válido para usuário:', user);
     req.user = user;
@@ -235,6 +239,17 @@ const protectedApis = [
 ];
 protectedApis.forEach((route) => {
   app.use(`/api/${route}`, authMiddleware);
+});
+
+// Error tracking for all API outcomes
+app.use('/api', (req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode >= 400) {
+      const level = res.statusCode >= 500 ? 'ERROR' : 'WARNING';
+      addLog(level, `${req.method} ${req.path} retornou ${res.statusCode}`, req.user ? req.user.username : 'anonymous');
+    }
+  });
+  next();
 });
 
 // Admin routes
@@ -345,10 +360,21 @@ function addLog(level, message, user = 'system') {
 
 app.get('/api/admin/logs', authMiddleware, adminMiddleware, (req, res) => {
   try {
-    console.log('[GET /api/admin/logs] Retornando últimos 100 logs');
-    res.json(systemLogs.slice(-100)); // Last 100 logs
+    const search = (req.query.search || '').toString().trim().toLowerCase();
+    const level = (req.query.level || '').toString().toUpperCase();
+    const filtered = systemLogs
+      .filter((log) => {
+        const matchesText = !search || log.message.toLowerCase().includes(search) || log.user.toLowerCase().includes(search);
+        const matchesLevel = !level || log.level === level;
+        return matchesText && matchesLevel;
+      });
+
+    const result = filtered.slice(-100);
+    console.log('[GET /api/admin/logs] Retornando logs, search:', search, 'level:', level, 'count:', result.length);
+    res.json(result);
   } catch (error) {
     console.error('[ERROR] Erro ao buscar logs:', error);
+    addLog('ERROR', `Erro ao buscar logs: ${error.message}`, req.user ? req.user.username : 'system');
     res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
   }
 });

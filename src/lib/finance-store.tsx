@@ -97,8 +97,19 @@ const getAuthHeaders = (isJson = true) => {
   return headers;
 };
 
+const handleUnauthorized = async (res: Response) => {
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
+  return res;
+};
+
 const fetchAccounts = async (): Promise<Account[]> => {
   const res = await fetch(`${API_BASE}/accounts`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch accounts');
   return res.json();
 };
@@ -109,6 +120,7 @@ const createAccount = async (account: Omit<Account, 'id'>): Promise<Account> => 
     headers: getAuthHeaders(),
     body: JSON.stringify(account),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to create account');
   return res.json();
 };
@@ -119,6 +131,7 @@ const updateAccount = async (account: Account): Promise<Account> => {
     headers: getAuthHeaders(),
     body: JSON.stringify(account),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to update account');
   return res.json();
 };
@@ -128,11 +141,13 @@ const deleteAccount = async (id: number): Promise<void> => {
     method: 'DELETE',
     headers: getAuthHeaders(false),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to delete account');
 };
 
 const fetchCategories = async (): Promise<Category[]> => {
   const res = await fetch(`${API_BASE}/categories`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch categories');
   return res.json();
 };
@@ -143,12 +158,14 @@ const createCategory = async (category: Omit<Category, 'id'>): Promise<Category>
     headers: getAuthHeaders(),
     body: JSON.stringify(category),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to create category');
   return res.json();
 };
 
 const fetchTransactions = async (): Promise<Transaction[]> => {
   const res = await fetch(`${API_BASE}/transactions`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch transactions');
   return res.json();
 };
@@ -159,6 +176,7 @@ const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<
     headers: getAuthHeaders(),
     body: JSON.stringify(transaction),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to create transaction');
   return res.json();
 };
@@ -168,11 +186,13 @@ const deleteTransaction = async (id: number): Promise<void> => {
     method: 'DELETE',
     headers: getAuthHeaders(false),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to delete transaction');
 };
 
 const fetchCreditCards = async (): Promise<CreditCard[]> => {
   const res = await fetch(`${API_BASE}/credit-cards`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch credit cards');
   return res.json();
 };
@@ -183,18 +203,21 @@ const createCreditCard = async (card: Omit<CreditCard, 'id'>): Promise<CreditCar
     headers: getAuthHeaders(),
     body: JSON.stringify(card),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to create credit card');
   return res.json();
 };
 
 const fetchGoals = async (): Promise<Goal[]> => {
   const res = await fetch(`${API_BASE}/goals`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch goals');
   return res.json();
 };
 
 const fetchSettings = async (): Promise<Settings> => {
   const res = await fetch(`${API_BASE}/settings`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch settings');
   const data = await res.json();
   return {
@@ -211,6 +234,7 @@ const fetchSettings = async (): Promise<Settings> => {
 
 const fetchNotifications = async (): Promise<Notification[]> => {
   const res = await fetch(`${API_BASE}/notifications`, { headers: getAuthHeaders(false) });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to fetch notifications');
   return res.json();
 };
@@ -221,6 +245,7 @@ const updateSettings = async (settings: Settings): Promise<Settings> => {
     headers: getAuthHeaders(),
     body: JSON.stringify(settings),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to update settings');
   return res.json();
 };
@@ -236,8 +261,7 @@ const createGoal = async (goal: Omit<Goal, 'id'>): Promise<Goal> => {
 };
 
 // Context
-const FinanceContext = createContext<any>(null);
-
+const FinanceContext = createContext<unknown>(null);
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const queryClient = useQueryClient();
 
