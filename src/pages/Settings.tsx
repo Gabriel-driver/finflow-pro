@@ -1,12 +1,17 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Save, User, Bell, Palette, Shield, Download, Trash2, Globe, DollarSign, Moon } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
   const { settings, updateSettings, transactions, accounts, categories, creditCards, goals } = useFinance();
   const [form, setForm] = useState(settings);
+
+  // Keep local form in sync with freshly fetched settings
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
 
   const handleSave = () => {
     updateSettings(form);

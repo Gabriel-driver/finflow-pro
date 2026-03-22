@@ -183,6 +183,8 @@ const authMiddleware = (req, res, next) => {
   });
 };
 
+const getUserId = (req) => (req.user && req.user.id ? req.user.id : 1);
+
 // PostgreSQL connection
 let pool;
 try {
@@ -218,6 +220,22 @@ const adminMiddleware = (req, res, next) => {
   console.log('[ADMIN] Acesso permitido para admin');
   next();
 };
+
+// Ensure authenticated access to user-specific APIs
+const protectedApis = [
+  'accounts',
+  'categories',
+  'transactions',
+  'credit-cards',
+  'goals',
+  'notifications',
+  'monthly-plans',
+  'settings',
+  'budgets',
+];
+protectedApis.forEach((route) => {
+  app.use(`/api/${route}`, authMiddleware);
+});
 
 // Admin routes
 app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
@@ -338,13 +356,14 @@ app.get('/api/admin/logs', authMiddleware, adminMiddleware, (req, res) => {
 // API Routes
 // Accounts
 app.get('/api/accounts', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userAccounts = mockAccounts.filter(a => a.user_id === 1); // mock user
+    const userAccounts = mockAccounts.filter(a => a.user_id === userId);
     res.json(userAccounts);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE user_id = $1', [1]); // mock user
+    const result = await pool.query('SELECT * FROM accounts WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -352,8 +371,9 @@ app.get('/api/accounts', async (req, res) => {
 });
 
 app.post('/api/accounts', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newAccount = { ...req.body, id: mockAccounts.length + 1, user_id: 1 };
+    const newAccount = { ...req.body, id: mockAccounts.length + 1, user_id: userId };
     mockAccounts.push(newAccount);
     res.json(newAccount);
     return;
@@ -362,7 +382,7 @@ app.post('/api/accounts', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO accounts (user_id, name, balance, icon, color, type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [1, name, balance, icon, color, type]
+      [userId, name, balance, icon, color, type]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -371,13 +391,17 @@ app.post('/api/accounts', async (req, res) => {
 });
 
 app.put('/api/accounts/:id', async (req, res) => {
+  const userId = getUserId(req);
   const { id } = req.params;
   const { name, balance, icon, color, type } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE accounts SET name = $1, balance = $2, icon = $3, color = $4, type = $5 WHERE id = $6 RETURNING *',
-      [name, balance, icon, color, type, id]
+      'UPDATE accounts SET name = $1, balance = $2, icon = $3, color = $4, type = $5 WHERE id = $6 AND user_id = $7 RETURNING *',
+      [name, balance, icon, color, type, id, userId]
     );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Conta não encontrada' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -385,10 +409,14 @@ app.put('/api/accounts/:id', async (req, res) => {
 });
 
 app.delete('/api/accounts/:id', async (req, res) => {
+  const userId = getUserId(req);
   const { id } = req.params;
   try {
-    await pool.query('DELETE FROM accounts WHERE id = $1', [id]);
-    res.json({ message: 'Account deleted' });
+    const result = await pool.query('DELETE FROM accounts WHERE id = $1 AND user_id = $2 RETURNING id', [id, userId]);
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Conta não encontrada' });
+    }
+    res.json({ message: 'Conta deletada com sucesso' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -396,13 +424,14 @@ app.delete('/api/accounts/:id', async (req, res) => {
 
 // Categories
 app.get('/api/categories', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userCategories = mockCategories.filter(c => c.user_id === 1);
+    const userCategories = mockCategories.filter(c => c.user_id === userId);
     res.json(userCategories);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM categories WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM categories WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -410,8 +439,9 @@ app.get('/api/categories', async (req, res) => {
 });
 
 app.post('/api/categories', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newCategory = { ...req.body, id: mockCategories.length + 1, user_id: 1 };
+    const newCategory = { ...req.body, id: mockCategories.length + 1, user_id: userId };
     mockCategories.push(newCategory);
     res.json(newCategory);
     return;
@@ -420,7 +450,7 @@ app.post('/api/categories', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO categories (user_id, name, type, icon, budget_limit) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [1, name, type, icon, budget_limit]
+      [userId, name, type, icon, budget_limit]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -430,13 +460,14 @@ app.post('/api/categories', async (req, res) => {
 
 // Transactions
 app.get('/api/transactions', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userTransactions = mockTransactions.filter(t => t.user_id === 1);
+    const userTransactions = mockTransactions.filter(t => t.user_id === userId);
     res.json(userTransactions);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM transactions WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM transactions WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -444,8 +475,9 @@ app.get('/api/transactions', async (req, res) => {
 });
 
 app.post('/api/transactions', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newTransaction = { ...req.body, id: mockTransactions.length + 1, user_id: 1 };
+    const newTransaction = { ...req.body, id: mockTransactions.length + 1, user_id: userId };
     mockTransactions.push(newTransaction);
     res.json(newTransaction);
     return;
@@ -454,7 +486,7 @@ app.post('/api/transactions', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO transactions (user_id, account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
-      [1, account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day]
+      [userId, account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -464,13 +496,14 @@ app.post('/api/transactions', async (req, res) => {
 
 // Credit Cards
 app.get('/api/credit-cards', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userCards = mockCreditCards.filter(c => c.user_id === 1);
+    const userCards = mockCreditCards.filter(c => c.user_id === userId);
     res.json(userCards);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM credit_cards WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM credit_cards WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -478,8 +511,9 @@ app.get('/api/credit-cards', async (req, res) => {
 });
 
 app.post('/api/credit-cards', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newCard = { ...req.body, id: mockCreditCards.length + 1, user_id: 1 };
+    const newCard = { ...req.body, id: mockCreditCards.length + 1, user_id: userId };
     mockCreditCards.push(newCard);
     res.json(newCard);
     return;
@@ -488,7 +522,7 @@ app.post('/api/credit-cards', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO credit_cards (user_id, name, icon, "limit", used, closing_day, due_day, color) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [1, name, icon, limit, used, closing_day, due_day, color]
+      [userId, name, icon, limit, used, closing_day, due_day, color]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -498,13 +532,14 @@ app.post('/api/credit-cards', async (req, res) => {
 
 // Goals
 app.get('/api/goals', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userGoals = mockGoals.filter(g => g.user_id === 1);
+    const userGoals = mockGoals.filter(g => g.user_id === userId);
     res.json(userGoals);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM goals WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM goals WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -512,8 +547,9 @@ app.get('/api/goals', async (req, res) => {
 });
 
 app.post('/api/goals', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newGoal = { ...req.body, id: mockGoals.length + 1, user_id: 1 };
+    const newGoal = { ...req.body, id: mockGoals.length + 1, user_id: userId };
     mockGoals.push(newGoal);
     res.json(newGoal);
     return;
@@ -522,7 +558,7 @@ app.post('/api/goals', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO goals (user_id, name, target, current, deadline, color) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [1, name, target, current, deadline, color]
+      [userId, name, target, current, deadline, color]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -532,13 +568,14 @@ app.post('/api/goals', async (req, res) => {
 
 // Notifications
 app.get('/api/notifications', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userNotifications = mockNotifications.filter(n => n.user_id === 1);
+    const userNotifications = mockNotifications.filter(n => n.user_id === userId);
     res.json(userNotifications);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM notifications WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM notifications WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -547,13 +584,14 @@ app.get('/api/notifications', async (req, res) => {
 
 // Monthly Plans
 app.get('/api/monthly-plans', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userPlans = mockMonthlyPlans.filter(p => p.user_id === 1);
+    const userPlans = mockMonthlyPlans.filter(p => p.user_id === userId);
     res.json(userPlans);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM monthly_plans WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM monthly_plans WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -561,8 +599,9 @@ app.get('/api/monthly-plans', async (req, res) => {
 });
 
 app.post('/api/monthly-plans', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newPlan = { ...req.body, id: mockMonthlyPlans.length + 1, user_id: 1 };
+    const newPlan = { ...req.body, id: mockMonthlyPlans.length + 1, user_id: userId };
     mockMonthlyPlans.push(newPlan);
     res.json(newPlan);
     return;
@@ -571,7 +610,7 @@ app.post('/api/monthly-plans', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO monthly_plans (user_id, month, expected_income, expected_expense, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [1, month, expected_income, expected_expense, notes]
+      [userId, month, expected_income, expected_expense, notes]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -581,33 +620,99 @@ app.post('/api/monthly-plans', async (req, res) => {
 
 // Settings
 app.get('/api/settings', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userSettings = mockSettings.find(s => s.user_id === 1);
-    res.json(userSettings || {});
+    const userSettings = mockSettings.find(s => s.user_id === userId);
+    const response = userSettings ? {
+      userName: userSettings.user_name || userSettings.userName,
+      email: userSettings.email,
+      currency: userSettings.currency,
+      language: userSettings.language,
+      notificationsEnabled: userSettings.notifications_enabled || userSettings.notificationsEnabled,
+      alertDaysBefore: userSettings.alert_days_before || userSettings.alertDaysBefore,
+      monthlyBudget: userSettings.monthly_budget || userSettings.monthlyBudget,
+      darkMode: userSettings.dark_mode || userSettings.darkMode,
+    } : {};
+    res.json(response);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM settings WHERE user_id = $1', [1]);
-    res.json(result.rows[0] || {});
+    const result = await pool.query('SELECT * FROM settings WHERE user_id = $1', [userId]);
+    const row = result.rows[0];
+    if (!row) {
+      return res.json({});
+    }
+    res.json({
+      userName: row.user_name,
+      email: row.email,
+      currency: row.currency,
+      language: row.language,
+      notificationsEnabled: row.notifications_enabled,
+      alertDaysBefore: row.alert_days_before,
+      monthlyBudget: parseFloat(row.monthly_budget),
+      darkMode: row.dark_mode,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.put('/api/settings', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const index = mockSettings.findIndex(s => s.user_id === 1);
+    const index = mockSettings.findIndex(s => s.user_id === userId);
+    const update = {
+      user_name: req.body.userName || req.body.user_name,
+      email: req.body.email,
+      currency: req.body.currency,
+      language: req.body.language,
+      notifications_enabled: req.body.notificationsEnabled || req.body.notifications_enabled,
+      alert_days_before: req.body.alertDaysBefore || req.body.alert_days_before,
+      monthly_budget: req.body.monthlyBudget || req.body.monthly_budget,
+      dark_mode: req.body.darkMode || req.body.dark_mode,
+    };
+
     if (index >= 0) {
-      mockSettings[index] = { ...mockSettings[index], ...req.body };
-      res.json(mockSettings[index]);
-    } else {
-      const newSettings = { ...req.body, id: mockSettings.length + 1, user_id: 1 };
-      mockSettings.push(newSettings);
-      res.json(newSettings);
+      mockSettings[index] = { ...mockSettings[index], ...update };
+      return res.json({
+        userName: mockSettings[index].user_name,
+        email: mockSettings[index].email,
+        currency: mockSettings[index].currency,
+        language: mockSettings[index].language,
+        notificationsEnabled: mockSettings[index].notifications_enabled,
+        alertDaysBefore: mockSettings[index].alert_days_before,
+        monthlyBudget: mockSettings[index].monthly_budget,
+        darkMode: mockSettings[index].dark_mode,
+      });
     }
-    return;
+
+    const newSettings = {
+      id: mockSettings.length + 1,
+      user_id: userId,
+      ...update,
+    };
+    mockSettings.push(newSettings);
+    return res.json({
+      userName: newSettings.user_name,
+      email: newSettings.email,
+      currency: newSettings.currency,
+      language: newSettings.language,
+      notificationsEnabled: newSettings.notifications_enabled,
+      alertDaysBefore: newSettings.alert_days_before,
+      monthlyBudget: newSettings.monthly_budget,
+      darkMode: newSettings.dark_mode,
+    });
   }
-  const { user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode } = req.body;
+
+  const user_name = req.body.userName || req.body.user_name;
+  const email = req.body.email;
+  const currency = req.body.currency;
+  const language = req.body.language;
+  const notifications_enabled = req.body.notificationsEnabled ?? req.body.notifications_enabled;
+  const alert_days_before = req.body.alertDaysBefore ?? req.body.alert_days_before;
+  const monthly_budget = req.body.monthlyBudget ?? req.body.monthly_budget;
+  const dark_mode = req.body.darkMode ?? req.body.dark_mode;
+
   try {
     const result = await pool.query(
       `INSERT INTO settings (user_id, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode)
@@ -622,9 +727,19 @@ app.put('/api/settings', async (req, res) => {
          monthly_budget = EXCLUDED.monthly_budget,
          dark_mode = EXCLUDED.dark_mode
        RETURNING *`,
-      [1, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode]
+      [userId, user_name, email, currency, language, notifications_enabled, alert_days_before, monthly_budget, dark_mode]
     );
-    res.json(result.rows[0]);
+    const changed = result.rows[0];
+    res.json({
+      userName: changed.user_name,
+      email: changed.email,
+      currency: changed.currency,
+      language: changed.language,
+      notificationsEnabled: changed.notifications_enabled,
+      alertDaysBefore: changed.alert_days_before,
+      monthlyBudget: parseFloat(changed.monthly_budget),
+      darkMode: changed.dark_mode,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -632,13 +747,14 @@ app.put('/api/settings', async (req, res) => {
 
 // Budgets
 app.get('/api/budgets', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const userBudgets = mockBudgets.filter(b => b.user_id === 1);
+    const userBudgets = mockBudgets.filter(b => b.user_id === userId);
     res.json(userBudgets);
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM budgets WHERE user_id = $1', [1]);
+    const result = await pool.query('SELECT * FROM budgets WHERE user_id = $1', [userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -646,8 +762,9 @@ app.get('/api/budgets', async (req, res) => {
 });
 
 app.post('/api/budgets', async (req, res) => {
+  const userId = getUserId(req);
   if (!pool) {
-    const newBudget = { ...req.body, id: mockBudgets.length + 1, user_id: 1 };
+    const newBudget = { ...req.body, id: mockBudgets.length + 1, user_id: userId };
     mockBudgets.push(newBudget);
     res.json(newBudget);
     return;
@@ -656,7 +773,7 @@ app.post('/api/budgets', async (req, res) => {
   try {
     const result = await pool.query(
       'INSERT INTO budgets (user_id, category_id, month, amount) VALUES ($1, $2, $3, $4) RETURNING *',
-      [1, category_id, month, amount]
+      [userId, category_id, month, amount]
     );
     res.json(result.rows[0]);
   } catch (err) {
