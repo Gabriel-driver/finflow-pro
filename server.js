@@ -696,9 +696,12 @@ app.use((req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+// Only listen in development/local environment
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+}
 
-// Export for Vercel
+// Export for Vercel serverless
 export default app;
