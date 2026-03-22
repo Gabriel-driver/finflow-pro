@@ -3,17 +3,18 @@
   "buildCommand": "npm run build",
   "builds": [
     {
-      "src": "package.json",
-      "use": "@vercel/node",
-      "config": {
-        "runtime": "nodejs20.x"
-      }
+      "src": "api/index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "dist/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/server.js"
+      "dest": "api/index.js"
     },
     {
       "src": "/assets/(.*)",
