@@ -166,10 +166,18 @@ app.post('/api/login', async (req, res) => {
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.sendStatus(401);
+  
+  if (!token) {
+    console.log('[AUTH] No token provided');
+    return res.status(401).json({ error: 'Token não fornecido' });
+  }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+    if (err) {
+      console.log('[AUTH] Invalid token:', err.message);
+      return res.status(403).json({ error: 'Token inválido' });
+    }
+    console.log('[AUTH] Token válido para usuário:', user);
     req.user = user;
     next();
   });
@@ -198,39 +206,60 @@ try {
 
 // Admin middleware - check if user is admin (for now, user id 1 is admin)
 const adminMiddleware = (req, res, next) => {
-  if (!req.user || req.user.id !== 1) {
+  console.log('[ADMIN] Verificando acesso admin. User:', req.user);
+  if (!req.user) {
+    console.log('[ADMIN] Sem user no request');
+    return res.status(403).json({ error: 'Usuário não autenticado' });
+  }
+  if (req.user.id !== 1) {
+    console.log('[ADMIN] Usuário não é admin. ID:', req.user.id);
     return res.status(403).json({ error: 'Acesso negado - apenas admin' });
   }
+  console.log('[ADMIN] Acesso permitido para admin');
   next();
 };
 
 // Admin routes
 app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    console.log('[GET /api/admin/users] Processando requisição. Pool disponível:', !!pool);
+    
     if (pool) {
+      console.log('[GET /api/admin/users] Buscando usuários do banco');
       const result = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY created_at DESC');
+      console.log('[GET /api/admin/users] Usuários encontrados:', result.rows.length);
       res.json(result.rows);
     } else {
+      console.log('[GET /api/admin/users] Pool null, usando mock data');
       res.json(mockUsers.map(u => ({ id: u.id, username: u.username, email: u.email, created_at: new Date().toISOString() })));
     }
   } catch (error) {
     console.error('[ERROR] Erro ao buscar usuários:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
   }
 });
 
 app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    console.log('[POST /api/admin/users] Criando novo usuário:', req.body.username, req.body.email);
+    
     const { username, email, password } = req.body;
+    
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'Username, email e password são obrigatórios' });
+    }
+    
     const hashedPassword = await bcrypt.hash(password, 10);
 
     if (pool) {
+      console.log('[POST /api/admin/users] Verificando se usuário já existe');
       // Check if user already exists
       const existingUser = await pool.query('SELECT id FROM users WHERE email = $1 OR username = $2', [email, username]);
       if (existingUser.rows.length > 0) {
         return res.status(400).json({ error: 'Usuário ou email já existe' });
       }
 
+      console.log('[POST /api/admin/users] Inserindo novo usuário no banco');
       // Insert new user
       const result = await pool.query(
         'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, created_at',
@@ -238,22 +267,25 @@ app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) =
       );
 
       const user = result.rows[0];
+      console.log('[POST /api/admin/users] Usuário criado com sucesso:', user.id);
       addLog('INFO', `Usuário criado pelo admin: ${username} (${email})`, req.user.username);
       res.json(user);
     } else {
+      console.log('[POST /api/admin/users] Pool null, usando mock data');
       const newUser = { id: mockUsers.length + 1, username, email, password_hash: hashedPassword, created_at: new Date().toISOString() };
       mockUsers.push(newUser);
       res.json({ id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at });
     }
   } catch (error) {
     console.error('[ERROR] Erro ao criar usuário:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
   }
 });
 
 app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
+    console.log('[DELETE /api/admin/users/:id] Deletando usuário ID:', userId);
 
     if (pool) {
       const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
@@ -272,7 +304,7 @@ app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, 
     }
   } catch (error) {
     console.error('[ERROR] Erro ao deletar usuário:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
   }
 });
 
@@ -294,7 +326,13 @@ function addLog(level, message, user = 'system') {
 }
 
 app.get('/api/admin/logs', authMiddleware, adminMiddleware, (req, res) => {
-  res.json(systemLogs.slice(-100)); // Last 100 logs
+  try {
+    console.log('[GET /api/admin/logs] Retornando últimos 100 logs');
+    res.json(systemLogs.slice(-100)); // Last 100 logs
+  } catch (error) {
+    console.error('[ERROR] Erro ao buscar logs:', error);
+    res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
+  }
 });
 
 // API Routes
