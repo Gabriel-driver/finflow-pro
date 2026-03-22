@@ -1,0 +1,2 @@
+// Script para instalar exceljs (caso não esteja instalado via dependência do projeto)
+// Basta rodar: npm install exceljs

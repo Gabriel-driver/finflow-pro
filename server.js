@@ -1,25 +1,20 @@
-// Endpoint para listar logs no admin
-app.get('/api/admin/logs', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    if (pool) {
-      const result = await pool.query('SELECT id, level, message, username, created_at FROM logs ORDER BY created_at DESC LIMIT 500');
-      res.json(result.rows);
-    } else {
-      res.json([]); // Sem logs em modo mock
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar logs', details: error.message });
-  }
-});
+// IMPORTS NO TOPO
+// (Removido bloco duplicado de imports)
+// (Removido bloco duplicado de imports e inicialização)
+// (Movido: definição de rotas deve vir após a declaração do app)
+// (Removido bloco duplicado de imports)
+
 import express from 'express';
-import path from 'path';
 import cors from 'cors';
-import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import fs from 'fs/promises';
+import path from 'path';
 import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { Pool } from 'pg';
+import { promises as fs } from 'fs';
+import multer from 'multer';
+import ExcelJS from 'exceljs';
 
 dotenv.config();
 
@@ -30,6 +25,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h';
+
+// Multer config for file uploads
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Middleware
 app.use(cors());
@@ -281,6 +279,7 @@ const protectedApis = [
   'monthly-plans',
   'settings',
   'budgets',
+  'import',
 ];
 protectedApis.forEach((route) => {
   app.use(`/api/${route}`, authMiddleware);
@@ -950,6 +949,133 @@ app.post('/api/budgets', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Import API
+app.post('/api/import', upload.single('file'), async (req, res) => {
+  const userId = getUserId(req);
+  if (!req.file) {
+    return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+  }
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const worksheet = workbook.getWorksheet(1);
+    
+    let success = 0;
+    let failed = 0;
+    const errors = [];
+
+    // Skip header row
+    const rows = [];
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        const rowData = {
+          date: row.getCell(1).value,
+          description: row.getCell(2).value,
+          category: row.getCell(3).value,
+          type: row.getCell(4).value,
+          amount: row.getCell(5).value,
+          account: row.getCell(6).value,
+          notes: row.getCell(7).value,
+        };
+        // Basic validation: skip empty rows
+        if (rowData.date && rowData.amount) {
+          rows.push(rowData);
+        }
+      }
+    });
+
+    for (const rowData of rows) {
+      try {
+        let { date, description, category, type, amount, account, notes } = rowData;
+
+        // Process Date
+        if (date instanceof Date) {
+          date = date.toISOString().split('T')[0];
+        } else if (typeof date === 'string') {
+          // simple check for yyyy-mm-dd
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            throw new Error(`Data inválida: ${date}`);
+          }
+        }
+
+        // Process Amount
+        if (typeof amount === 'string') {
+          amount = parseFloat(amount.replace(',', '.'));
+        }
+        if (isNaN(amount)) {
+          throw new Error(`Valor inválido: ${amount}`);
+        }
+
+        // Process Type
+        if (!['income', 'expense'].includes(type)) {
+          throw new Error(`Tipo inválido: ${type}. Use income ou expense.`);
+        }
+
+        if (pool) {
+          // 1. Get or Create Account
+          let accountId;
+          const accountRes = await pool.query('SELECT id FROM accounts WHERE user_id = $1 AND name = $2', [userId, account]);
+          if (accountRes.rows.length > 0) {
+            accountId = accountRes.rows[0].id;
+          } else {
+            const newAcc = await pool.query(
+              'INSERT INTO accounts (user_id, name, balance, icon, color, type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+              [userId, account, 0, '💳', 'hsl(var(--primary))', 'checking']
+            );
+            accountId = newAcc.rows[0].id;
+          }
+
+          // 2. Insert Transaction
+          await pool.query(
+            'INSERT INTO transactions (user_id, account_id, type, amount, category, description, date) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [userId, accountId, type, amount, category, description, date]
+          );
+        } else {
+          // Mock data fallback
+          let accountId;
+          const existingAcc = mockAccounts.find(a => a.user_id === userId && a.name === account);
+          if (existingAcc) {
+            accountId = existingAcc.id;
+          } else {
+            accountId = mockAccounts.length + 1;
+            mockAccounts.push({
+              id: accountId,
+              user_id: userId,
+              name: account,
+              balance: 0,
+              icon: "💳",
+              color: "hsl(var(--primary))",
+              type: "checking"
+            });
+          }
+
+          mockTransactions.push({
+            id: mockTransactions.length + 1,
+            user_id: userId,
+            account_id: accountId,
+            type,
+            amount,
+            category,
+            description,
+            date
+          });
+        }
+        success++;
+      } catch (err) {
+        failed++;
+        errors.push(`Erro na linha: ${err.message}`);
+      }
+    }
+
+    addLog('INFO', `Importação concluída: ${success} sucesso, ${failed} falha`, req.user.username);
+    res.json({ success, failed, errors });
+  } catch (error) {
+    console.error('[ERROR] Erro ao processar importação:', error);
+    res.status(500).json({ error: 'Erro ao processar o arquivo Excel' });
   }
 });
 

@@ -19,6 +19,7 @@ import Budgets from "./pages/Budgets";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
+import ImportPage from "./pages/Import";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +48,7 @@ const router = createBrowserRouter(
     { path: '/reports', element: <ProtectedRoute><Reports /></ProtectedRoute> },
     { path: '/budgets', element: <ProtectedRoute><Budgets /></ProtectedRoute> },
     { path: '/admin', element: <ProtectedRoute adminOnly><Admin /></ProtectedRoute> },
+    { path: '/import', element: <ProtectedRoute><ImportPage /></ProtectedRoute> },
     { path: '*', element: <NotFound /> },
   ],
   {
@@ -114,6 +116,10 @@ const App = () => (
           {
             element: <FinanceProvider><ProtectedRoute adminOnly><Admin /></ProtectedRoute></FinanceProvider>,
             path: '/admin',
+          },
+          {
+            element: <FinanceProvider><ProtectedRoute><ImportPage /></ProtectedRoute></FinanceProvider>,
+            path: '/import',
           },
           { path: '*', element: <NotFound /> },
         ], {

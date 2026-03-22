@@ -1,4 +1,4 @@
-import { LayoutDashboard, Wallet, ArrowLeftRight, Tags, Target, LogOut, CreditCard, CalendarDays, Bell, Settings, FileBarChart, DollarSign } from "lucide-react";
+import { LayoutDashboard, Wallet, ArrowLeftRight, Tags, Target, LogOut, CreditCard, CalendarDays, Bell, Settings, FileBarChart, DollarSign, ArrowDownToLine } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
@@ -52,6 +52,7 @@ const navSections = [
     items: [
       { title: "Notificações", url: "/notifications", icon: Bell },
       { title: "Configurações", url: "/settings", icon: Settings },
+      { title: "Importar Dados", url: "/import", icon: ArrowDownToLine },
     ],
   },
 ];
