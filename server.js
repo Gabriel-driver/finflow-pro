@@ -665,12 +665,35 @@ app.post('/api/budgets', async (req, res) => {
 });
 
 // Serve static files from the React app build directory
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, 'dist'), {
+  maxAge: '1d',
+  etag: false,
+  setHeaders: (res, filePath) => {
+    // Set proper MIME types
+    if (filePath.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    } else if (filePath.endsWith('.json')) {
+      res.setHeader('Content-Type', 'application/json');
+    } else if (filePath.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    }
+  }
+}));
 
-// Catch all handler: send back React's index.html file
+// Catch all handler: send back React's index.html file ONLY for SPA routes
 app.use((req, res) => {
-  console.log('Serving index.html for', req.path);
-  res.sendFile(path.join(__dirname, 'dist/index.html'));
+  // Don't serve index.html for API calls or files with extensions
+  if (req.path.startsWith('/api/') || req.path.includes('.')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  
+  console.log('Serving index.html for SPA route:', req.path);
+  res.sendFile(path.join(__dirname, 'dist/index.html'), (err) => {
+    if (err) {
+      console.error('Error serving index.html:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 });
 
 app.listen(port, () => {
