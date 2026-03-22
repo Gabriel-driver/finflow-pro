@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  :root {
+    --background: 240 6% 7%;
+    --foreground: 220 14% 92%;
+
+    --card: 240 5% 10%;
+    --card-foreground: 220 14% 92%;
+
+    --popover: 240 5% 12%;
+    --popover-foreground: 220 14% 92%;
+
+    --primary: 250 85% 65%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 14%;
+    --secondary-foreground: 220 14% 80%;
+
+    --muted: 240 4% 16%;
+    --muted-foreground: 220 8% 55%;
+
+    --accent: 200 95% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 60% 48%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 8%;
+
+    --border: 240 4% 16%;
+    --input: 240 4% 18%;
+    --ring: 250 85% 65%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 240 6% 8%;
+    --sidebar-foreground: 220 14% 75%;
+    --sidebar-primary: 250 85% 65%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 5% 14%;
+    --sidebar-accent-foreground: 220 14% 92%;
+    --sidebar-border: 240 4% 14%;
+    --sidebar-ring: 250 85% 65%;
+
+    --chart-income: 152 60% 48%;
+    --chart-expense: 0 72% 55%;
+    --chart-1: 250 85% 65%;
+    --chart-2: 200 95% 55%;
+    --chart-3: 152 60% 48%;
+    --chart-4: 38 92% 55%;
+    --chart-5: 340 75% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    @apply bg-card/60 backdrop-blur-xl border border-border/50 shadow-lg shadow-black/20;
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300 ease-out;
+  }
+  .glass-card-hover:hover {
+    @apply border-primary/20 shadow-xl shadow-primary/5 -translate-y-0.5;
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.3);
+  }
+
+  .glow-success {
+    box-shadow: 0 0 20px -5px hsl(var(--success) / 0.3);
+  }
+
+  .glow-destructive {
+    box-shadow: 0 0 20px -5px hsl(var(--destructive) / 0.3);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-slide-right {
+    animation: slideRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+}
+
+/* Fix dropdown/select/popover dark theme */
+[data-radix-popper-content-wrapper] [role="listbox"],
+[data-radix-popper-content-wrapper] [role="menu"],
+[data-radix-popper-content-wrapper] [cmdk-list],
+select option,
+[data-state="open"] > [data-radix-collection-item] {
+  background-color: hsl(240 5% 12%) !important;
+  color: hsl(220 14% 92%) !important;
+  border-color: hsl(240 4% 16%) !important;
+}
+
+select {
+  background-color: hsl(240 4% 16%);
+  color: hsl(220 14% 92%);
+}
+
+select option {
+  background-color: hsl(240 5% 10%);
+  color: hsl(220 14% 92%);
+}
+
+/* Reduce hover brightness on dark theme */
+.hover\:bg-muted\/20:hover { background-color: hsl(240 4% 16% / 0.2) !important; }
+.hover\:bg-muted\/50:hover { background-color: hsl(240 4% 16% / 0.35) !important; }
+
+@keyframes fadeIn {
+  from { opacity: 0; filter: blur(4px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes float3d {
+  0%, 100% { transform: translateY(0px) rotateX(0deg) rotateY(0deg); }
+  25% { transform: translateY(-12px) rotateX(5deg) rotateY(-5deg); }
+  50% { transform: translateY(-6px) rotateX(-3deg) rotateY(8deg); }
+  75% { transform: translateY(-16px) rotateX(4deg) rotateY(-3deg); }
+}
+
+.animate-float-3d {
+  animation: float3d 6s ease-in-out infinite;
+}
