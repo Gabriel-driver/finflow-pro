@@ -1,12 +1,35 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
-import { Plus, CreditCard, Calendar } from "lucide-react";
+import type { CreditCard, Transaction } from "@/lib/finance-store";
+import { Plus, Trash2, Pencil, Eye, Calendar, CreditCard as CreditCardIcon } from "lucide-react";
 import { useState } from "react";
 import { NewCreditCardModal } from "@/components/NewCreditCardModal";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MonthSelector, useMonthNav } from "@/components/MonthSelector";
+import { getBank } from "@/lib/bank-utils";
 
 export default function CreditCards() {
-  const { creditCards } = useFinance();
+  const { creditCards, transactions, deleteCreditCard } = useFinance();
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingCard, setEditingCard] = useState<any>(null);
+  const [viewingCard, setViewingCard] = useState<CreditCard | null>(null);
+  const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
+
+  const handleEdit = (card: any) => {
+    setEditingCard(card);
+    setModalOpen(true);
+  };
+
+  const handleCloseModal = (open: boolean) => {
+    setModalOpen(open);
+    if (!open) setEditingCard(null);
+  };
+
+  const getCardTransactions = (cardId: number, month: string): Transaction[] => {
+    return transactions
+      .filter(t => t.creditCardId === cardId && t.date.startsWith(month))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  };
 
   return (
     <AppLayout title="Cartões de Crédito">
@@ -23,24 +46,26 @@ export default function CreditCards() {
             const usedPct = (cc.used / cc.limit) * 100;
             const available = cc.limit - cc.used;
             const isHigh = usedPct > 80;
+            const bank = getBank(cc.name);
+            const color = bank?.color || cc.color;
 
             return (
               <div key={cc.id} className="animate-slide-up" style={{ animationDelay: `${i * 100}ms`, animationFillMode: "backwards" }}>
                 {/* Card visual */}
                 <div className="relative rounded-2xl p-6 overflow-hidden h-48"
                   style={{
-                    background: `linear-gradient(135deg, ${cc.color}, hsl(var(--card)))`,
-                    boxShadow: `0 12px 40px -8px ${cc.color}40`,
+                    background: `linear-gradient(135deg, ${color}, hsl(var(--card)))`,
+                    boxShadow: `0 12px 40px -8px ${color}40`,
                   }}>
                   <div className="absolute top-0 right-0 w-40 h-40 rounded-full blur-[60px]"
-                    style={{ background: `${cc.color}30` }} />
+                    style={{ background: `${color}30` }} />
                   <div className="relative z-10 h-full flex flex-col justify-between">
                     <div className="flex justify-between items-start">
                       <div>
                         <p className="text-sm text-foreground/60 font-medium">Cartão de Crédito</p>
                         <p className="text-lg font-bold mt-0.5">{cc.name}</p>
                       </div>
-                      <CreditCard className="h-8 w-8 text-foreground/40" />
+                      <CreditCardIcon className="h-8 w-8 text-foreground/40" />
                     </div>
                     <div>
                       <p className="text-xs text-foreground/50 mb-0.5">•••• •••• •••• {String(Math.floor(Math.random() * 9000 + 1000))}</p>
@@ -58,11 +83,24 @@ export default function CreditCards() {
                   </div>
                 </div>
 
-                {/* Usage bar */}
-                <div className="glass-card rounded-xl p-5 -mt-4 relative z-10 mx-2">
-                  <div className="flex justify-between mb-2">
-                    <span className="text-sm text-muted-foreground">Fatura atual</span>
-                    <span className={`text-sm font-bold tabular-nums ${isHigh ? "text-destructive" : "text-foreground"}`}>{formatCurrency(cc.used)}</span>
+                {/* Usage bar & Actions */}
+                <div className="group glass-card rounded-xl p-5 -mt-4 relative z-10 mx-2">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <span className="text-sm text-muted-foreground">Fatura atual</span>
+                      <span className={`block text-sm font-bold tabular-nums ${isHigh ? "text-destructive" : "text-foreground"}`}>{formatCurrency(cc.used)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button onClick={() => setViewingCard(cc)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors" title="Ver Fatura">
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => handleEdit(cc)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors" title="Editar Cartão">
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => deleteCreditCard(cc.id)} className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors" title="Excluir Cartão">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden mb-2">
                     <div className={`h-full rounded-full transition-all duration-700 ${isHigh ? "bg-destructive" : "bg-primary"}`}
@@ -85,7 +123,72 @@ export default function CreditCards() {
           </div>
         </div>
       </div>
-      <NewCreditCardModal open={modalOpen} onOpenChange={setModalOpen} />
+      <NewCreditCardModal open={modalOpen} onOpenChange={handleCloseModal} editingCard={editingCard} />
+
+      {/* Detail modal */}
+      {viewingCard && (
+        <CardStatementModal 
+          card={viewingCard} 
+          onClose={() => setViewingCard(null)} 
+        />
+      )}
     </AppLayout>
   );
+}
+
+function CardStatementModal({ card, onClose }: { card: CreditCard, onClose: () => void }) {
+  const { transactions } = useFinance();
+  const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
+
+  const getCardTransactions = (cardId: number, month: string): Transaction[] => {
+    return transactions
+      .filter(t => t.creditCardId === cardId && t.date.startsWith(month))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  };
+
+  const cardTransactions = getCardTransactions(card.id, monthKey);
+  const total = cardTransactions.reduce((sum, t) => sum + t.amount, 0);
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Fatura de {card.name}</DialogTitle>
+        </DialogHeader>
+        <div className="-mx-6 border-b">
+          <div className="px-6 pb-4">
+            <MonthSelector 
+              currentDate={currentDate} 
+              prevMonth={prevMonth} 
+              nextMonth={nextMonth} 
+            />
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div className="bg-muted/50 rounded-lg p-4 text-center">
+            <p className="text-sm text-muted-foreground">Total da Fatura</p>
+            <p className="text-2xl font-bold text-primary">{formatCurrency(total)}</p>
+          </div>
+
+          <div className="max-h-[40vh] overflow-y-auto pr-2 -mr-4">
+            {cardTransactions.length > 0 ? (
+              <ul className="space-y-3">
+                {cardTransactions.map(t => (
+                  <li key={t.id} className="flex items-center justify-between text-sm">
+                    <div>
+                      <p className="font-medium">{t.description}</p>
+                      <p className="text-xs text-muted-foreground">{new Date(t.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })} - {t.category}</p>
+                    </div>
+                    <span className="font-mono font-medium text-right">{formatCurrency(t.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-center text-sm text-muted-foreground py-8">Nenhum lançamento para este mês.</p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
 }

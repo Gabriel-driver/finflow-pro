@@ -5,29 +5,66 @@ import { Save, User, Bell, Palette, Shield, Download, Trash2, Globe, DollarSign,
 import { toast } from "sonner";
 
 export default function Settings() {
-  const { settings, updateSettings, transactions, accounts, categories, creditCards, goals } = useFinance();
+  const { settings, updateSettings, changePassword, transactions, accounts, categories, creditCards, goals, isLoading } = useFinance();
   const [form, setForm] = useState(settings);
+  const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  // Keep local form in sync with freshly fetched settings
+  // Initialize form once when settings are ready
   useEffect(() => {
-    setForm(settings);
-  }, [settings]);
+    if (!isLoading && settings && !isInitialized) {
+      setForm(settings);
+      setIsInitialized(true);
+    }
+  }, [settings, isLoading, isInitialized]);
 
-  const handleSave = () => {
-    updateSettings(form);
-    toast.success("Configurações salvas com sucesso!");
+  // Fallback for case where settings are already available on mount
+  useEffect(() => {
+    if (settings.userName && !isInitialized) {
+      setForm(settings);
+      setIsInitialized(true);
+    }
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      // 1. Update basic settings
+      updateSettings(form);
+
+      // 2. Change password if filled
+      if (passwords.new) {
+        if (passwords.new !== passwords.confirm) {
+          toast.error("As novas senhas não coincidem!");
+          return;
+        }
+        if (!passwords.current) {
+          toast.error("A senha atual é obrigatória para alteração!");
+          return;
+        }
+        
+        await changePassword({ currentPassword: passwords.current, newPassword: passwords.new });
+        setPasswords({ current: "", new: "", confirm: "" });
+      }
+
+      toast.success("Configurações salvas com sucesso!");
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar configurações");
+    }
   };
 
   const exportCSV = () => {
     const headers = "Data;Descrição;Categoria;Tipo;Valor;Conta\n";
     const rows = transactions.map(t => {
       const acc = accounts.find(a => a.id === t.accountId);
-      return `${new Date(t.date).toLocaleDateString("pt-BR")};"${t.description}";"${t.category}";${t.type === "income" ? "Entrada" : "Saída"};${t.amount.toFixed(2).replace(".", ",")};"${acc?.name || ""}"`;
+      const card = creditCards.find(c => c.id === t.creditCardId);
+      const origin = acc ? acc.name : (card ? `Cartão: ${card.name}` : "");
+      return `${new Date(t.date).toLocaleDateString("pt-BR")};"${t.description}";"${t.category}";${t.type === "income" ? "Entrada" : "Saída"};${t.amount.toFixed(2).replace(".", ",")};"${origin}"`;
     }).join("\n");
     const blob = new Blob(["\uFEFF" + headers + rows], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `continhas-da-duda-${new Date().toISOString().split("T")[0]}.csv`; a.click();
+    const systemFileName = (settings.systemName || "finflow").toLowerCase().replace(/\s+/g, "-");
+    a.href = url; a.download = `${systemFileName}-${new Date().toISOString().split("T")[0]}.csv`; a.click();
     URL.revokeObjectURL(url);
     toast.success("Arquivo CSV exportado!");
   };
@@ -37,7 +74,8 @@ export default function Settings() {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `backup-continhas-${new Date().toISOString().split("T")[0]}.json`; a.click();
+    const systemFileName = (settings.systemName || "finflow").toLowerCase().replace(/\s+/g, "-");
+    a.href = url; a.download = `backup-${systemFileName}-${new Date().toISOString().split("T")[0]}.json`; a.click();
     URL.revokeObjectURL(url);
     toast.success("Backup JSON exportado!");
   };
@@ -59,7 +97,7 @@ export default function Settings() {
           </div>
           <div>
             <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Email</label>
-            <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputClass} />
+            <input type="email" value={form.email} disabled className={`${inputClass} opacity-60 cursor-not-allowed`} title="O email não pode ser alterado" />
           </div>
         </div>
       ),
@@ -146,17 +184,31 @@ export default function Settings() {
       content: (
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nova Senha</label>
-            <input type="password" placeholder="••••••••" className={inputClass} />
+            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Senha Atual</label>
+            <input type="password" value={passwords.current} onChange={e => setPasswords({ ...passwords, current: e.target.value })} placeholder="••••••••" className={inputClass} />
           </div>
           <div>
-            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Confirmar Senha</label>
-            <input type="password" placeholder="••••••••" className={inputClass} />
+            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Nova Senha</label>
+            <input type="password" value={passwords.new} onChange={e => setPasswords({ ...passwords, new: e.target.value })} placeholder="••••••••" className={inputClass} />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Confirmar Nova Senha</label>
+            <input type="password" value={passwords.confirm} onChange={e => setPasswords({ ...passwords, confirm: e.target.value })} placeholder="••••••••" className={inputClass} />
           </div>
         </div>
       ),
     },
   ];
+
+  if (isLoading && !settings.userName) {
+    return (
+      <AppLayout title="Configurações">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout title="Configurações">

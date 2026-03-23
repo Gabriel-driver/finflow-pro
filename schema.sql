@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES users(id),
   account_id INTEGER REFERENCES accounts(id),
+  credit_card_id INTEGER REFERENCES credit_cards(id),
   type VARCHAR(10) CHECK (type IN ('income', 'expense')),
   amount DECIMAL(10,2) NOT NULL,
   category VARCHAR(255),
@@ -118,4 +119,22 @@ CREATE TABLE IF NOT EXISTS budgets (
   month VARCHAR(7) NOT NULL, -- "2026-03"
   amount DECIMAL(10,2) NOT NULL,
   UNIQUE(user_id, category_id, month)
+);
+
+-- Recurring Rules (Rules for automatic transaction generation)
+CREATE TABLE IF NOT EXISTS recurring_rules (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  account_id INTEGER REFERENCES accounts(id),
+  credit_card_id INTEGER REFERENCES credit_cards(id),
+  type VARCHAR(10) CHECK (type IN ('income', 'expense')),
+  amount DECIMAL(10,2) NOT NULL,
+  category VARCHAR(255),
+  description TEXT,
+  recurring_day INTEGER NOT NULL,
+  active BOOLEAN DEFAULT TRUE,
+  start_date DATE DEFAULT CURRENT_DATE,
+  end_date DATE, -- "até que mês"
+  last_processed_month VARCHAR(7), -- "2026-03" to avoid double processing
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

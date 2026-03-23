@@ -16,6 +16,7 @@ import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Reports from "./pages/Reports";
 import Budgets from "./pages/Budgets";
+import RecurringTransactions from "./pages/RecurringTransactions";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
@@ -36,99 +37,161 @@ const queryClient = new QueryClient({
 const router = createBrowserRouter(
   [
     { path: '/login', element: <Login /> },
-    { path: '/', element: <ProtectedRoute><Dashboard /></ProtectedRoute> },
-    { path: '/accounts', element: <ProtectedRoute><Accounts /></ProtectedRoute> },
-    { path: '/transactions', element: <ProtectedRoute><Transactions /></ProtectedRoute> },
-    { path: '/categories', element: <ProtectedRoute><Categories /></ProtectedRoute> },
-    { path: '/goals', element: <ProtectedRoute><Goals /></ProtectedRoute> },
-    { path: '/credit-cards', element: <ProtectedRoute><CreditCards /></ProtectedRoute> },
-    { path: '/monthly-plan', element: <ProtectedRoute><MonthlyPlan /></ProtectedRoute> },
-    { path: '/notifications', element: <ProtectedRoute><Notifications /></ProtectedRoute> },
-    { path: '/settings', element: <ProtectedRoute><Settings /></ProtectedRoute> },
-    { path: '/reports', element: <ProtectedRoute><Reports /></ProtectedRoute> },
-    { path: '/budgets', element: <ProtectedRoute><Budgets /></ProtectedRoute> },
-    { path: '/admin', element: <ProtectedRoute adminOnly><Admin /></ProtectedRoute> },
-    { path: '/import', element: <ProtectedRoute><ImportPage /></ProtectedRoute> },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Accounts />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/accounts',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Transactions />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/transactions',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <RecurringTransactions />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/recurring',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Categories />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/categories',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Goals />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/goals',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <CreditCards />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/credit-cards',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <MonthlyPlan />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/monthly-plan',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Notifications />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/notifications',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Settings />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/settings',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Reports />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/reports',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <Budgets />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/budgets',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute adminOnly>
+            <Admin />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/admin',
+    },
+    {
+      element: (
+        <FinanceProvider>
+          <ProtectedRoute>
+            <ImportPage />
+          </ProtectedRoute>
+        </FinanceProvider>
+      ),
+      path: '/import',
+    },
     { path: '*', element: <NotFound /> },
   ],
   {
     future: {
-      v7_startTransition: true,
       v7_relativeSplatPath: true,
     },
   }
 );
-
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      {/* Só monta o FinanceProvider nas rotas protegidas */}
-      <RouterProvider
-        router={createBrowserRouter([
-          { path: '/login', element: <Login /> },
-          {
-            element: <FinanceProvider><ProtectedRoute><Dashboard /></ProtectedRoute></FinanceProvider>,
-            path: '/',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Accounts /></ProtectedRoute></FinanceProvider>,
-            path: '/accounts',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Transactions /></ProtectedRoute></FinanceProvider>,
-            path: '/transactions',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Categories /></ProtectedRoute></FinanceProvider>,
-            path: '/categories',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Goals /></ProtectedRoute></FinanceProvider>,
-            path: '/goals',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><CreditCards /></ProtectedRoute></FinanceProvider>,
-            path: '/credit-cards',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><MonthlyPlan /></ProtectedRoute></FinanceProvider>,
-            path: '/monthly-plan',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Notifications /></ProtectedRoute></FinanceProvider>,
-            path: '/notifications',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Settings /></ProtectedRoute></FinanceProvider>,
-            path: '/settings',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Reports /></ProtectedRoute></FinanceProvider>,
-            path: '/reports',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><Budgets /></ProtectedRoute></FinanceProvider>,
-            path: '/budgets',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute adminOnly><Admin /></ProtectedRoute></FinanceProvider>,
-            path: '/admin',
-          },
-          {
-            element: <FinanceProvider><ProtectedRoute><ImportPage /></ProtectedRoute></FinanceProvider>,
-            path: '/import',
-          },
-          { path: '*', element: <NotFound /> },
-        ], {
-          future: {
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          },
-        })}
-      />
+      <RouterProvider router={router} />
     </TooltipProvider>
   </QueryClientProvider>
 );

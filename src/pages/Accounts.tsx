@@ -1,19 +1,33 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
 import { MonthSelector, useMonthNav } from "@/components/MonthSelector";
-import { Plus, Trash2, ArrowUpRight, ArrowDownRight, Eye } from "lucide-react";
+import { Plus, Trash2, ArrowUpRight, ArrowDownRight, Eye, Pencil } from "lucide-react";
 import { useState } from "react";
 import { NewAccountModal } from "@/components/NewAccountModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getBank } from "@/lib/bank-utils";
 
 export default function Accounts() {
-  const { accounts, transactions, deleteAccount, getTotalIncome, getTotalExpenses } = useFinance();
+  const { accounts, transactions, deleteAccount } = useFinance();
   const [modalOpen, setModalOpen] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [editAccount, setEditAccount] = useState<any>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
   const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
 
+  const handleEdit = (acc: any) => {
+    setEditAccount(acc);
+    setModalOpen(true);
+  };
+
+  const handleCloseModal = (open: boolean) => {
+    setModalOpen(open);
+    if (!open) setEditAccount(null);
+  };
+
   const detailAccount = accounts.find(a => a.id === detailId);
-  const detailTxs = detailId ? transactions.filter(t => t.accountId === detailId && t.date.startsWith(monthKey)).sort((a, b) => b.date.localeCompare(a.date)) : [];
+  const detailTxs = detailId ? transactions
+    .filter(t => (t.accountId === detailId || t.account_id === detailId) && t.date.startsWith(monthKey))
+    .sort((a, b) => b.date.localeCompare(a.date)) : [];
 
   return (
     <AppLayout title="Contas">
@@ -27,11 +41,19 @@ export default function Accounts() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {accounts.map((acc, i) => {
-            const monthInc = transactions.filter(t => t.accountId === acc.id && t.type === "income" && t.date.startsWith(monthKey)).reduce((s, t) => s + t.amount, 0);
-            const monthExp = transactions.filter(t => t.accountId === acc.id && t.type === "expense" && t.date.startsWith(monthKey)).reduce((s, t) => s + t.amount, 0);
+            const monthInc = transactions
+              .filter(t => (t.accountId === acc.id || t.account_id === acc.id) && t.type === "income" && t.date.startsWith(monthKey))
+              .reduce((s, t) => s + (typeof t.amount === 'number' ? t.amount : parseFloat(t.amount || '0')), 0);
+            
+            const monthExp = transactions
+              .filter(t => (t.accountId === acc.id || t.account_id === acc.id) && t.type === "expense" && t.date.startsWith(monthKey))
+              .reduce((s, t) => s + (typeof t.amount === 'number' ? t.amount : parseFloat(t.amount || '0')), 0);
+
+            const bank = getBank(acc.name);
 
             return (
-              <div key={acc.id} className="glass-card-hover rounded-xl p-5 animate-slide-up group" style={{ animationDelay: `${i * 80}ms`, animationFillMode: "backwards" }}>
+              <div key={acc.id} className="glass-card-hover rounded-xl p-5 animate-slide-up group relative overflow-hidden" style={{ animationDelay: `${i * 80}ms`, animationFillMode: "backwards" }}>
+                {bank && <div className="absolute top-0 left-0 w-full h-1" style={{ backgroundColor: bank.color }} />}
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">{acc.icon}</span>
@@ -43,6 +65,9 @@ export default function Accounts() {
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                     <button onClick={() => setDetailId(acc.id)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors">
                       <Eye className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => handleEdit(acc)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors">
+                      <Pencil className="h-4 w-4" />
                     </button>
                     <button onClick={() => deleteAccount(acc.id)} className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
                       <Trash2 className="h-4 w-4" />
@@ -73,7 +98,7 @@ export default function Accounts() {
         </div>
       </div>
 
-      <NewAccountModal open={modalOpen} onOpenChange={setModalOpen} />
+      <NewAccountModal open={modalOpen} onOpenChange={handleCloseModal} editAccount={editAccount} />
 
       {/* Detail modal */}
       <Dialog open={!!detailId} onOpenChange={() => setDetailId(null)}>

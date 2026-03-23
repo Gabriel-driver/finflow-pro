@@ -1,12 +1,72 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
 import { useState } from "react";
 import { NewGoalModal } from "@/components/NewGoalModal";
+import { toast } from "sonner";
 
 export default function Goals() {
-  const { goals, deleteGoal, updateGoal } = useFinance();
+  const { goals, deleteGoal, updateGoal, addTransaction, accounts } = useFinance();
   const [modalOpen, setModalOpen] = useState(false);
+
+  const handleDeposit = async (goal: any, amount: number) => {
+    if (accounts.length === 0) {
+      toast.error("Você precisa de uma conta para realizar depósitos");
+      return;
+    }
+
+    try {
+      // 1. Create a transaction
+      await addTransaction({
+        accountId: accounts[0].id,
+        type: "expense",
+        amount: amount,
+        category: "Metas",
+        description: `Depósito na meta: ${goal.name}`,
+        date: new Date().toISOString().split('T')[0]
+      });
+
+      // 2. Update goal current value
+      await updateGoal(goal.id, { ...goal, current: goal.current + amount });
+      
+      toast.success(`R$ ${amount.toFixed(2)} depositados com sucesso!`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao realizar depósito");
+    }
+  };
+
+  const handleWithdraw = async (goal: any, amount: number) => {
+    if (accounts.length === 0) {
+      toast.error("Você precisa de uma conta para realizar retiradas");
+      return;
+    }
+
+    if (goal.current < amount) {
+      toast.error("Saldo insuficiente na meta");
+      return;
+    }
+
+    try {
+      // 1. Create a transaction (income)
+      await addTransaction({
+        accountId: accounts[0].id,
+        type: "income",
+        amount: amount,
+        category: "Metas",
+        description: `Retirada da meta: ${goal.name}`,
+        date: new Date().toISOString().split('T')[0]
+      });
+
+      // 2. Update goal current value
+      await updateGoal(goal.id, { ...goal, current: goal.current - amount });
+      
+      toast.success(`R$ ${amount.toFixed(2)} retirados com sucesso!`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao realizar retirada");
+    }
+  };
 
   return (
     <AppLayout title="Metas Financeiras">
@@ -27,7 +87,7 @@ export default function Goals() {
             return (
               <div key={goal.id} className="glass-card-hover rounded-xl p-5 animate-slide-up group" style={{ animationDelay: `${i * 100}ms`, animationFillMode: "backwards" }}>
                 <div className="flex items-center gap-3 mb-4">
-                  <span className="text-2xl">{goal.icon}</span>
+                  <span className="text-2xl">{goal.icon || "🎯"}</span>
                   <div className="flex-1">
                     <h3 className="font-semibold text-sm">{goal.name}</h3>
                     <p className="text-xs text-muted-foreground">{formatCurrency(goal.current)} de {formatCurrency(goal.target)}</p>
@@ -47,12 +107,22 @@ export default function Goals() {
                 <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                   <div className={`h-full rounded-full transition-all duration-700 ${isComplete ? "bg-success" : "bg-primary"}`} style={{ width: `${progress}%` }} />
                 </div>
-                <div className="flex justify-between items-center mt-2">
-                  <p className="text-xs text-muted-foreground">{progress.toFixed(0)}%</p>
-                  {!isComplete && (
-                    <button onClick={() => updateGoal(goal.id, { current: Math.min(goal.current + 100, goal.target) })}
-                      className="text-xs text-primary hover:underline">+ Depositar</button>
-                  )}
+                <div className="flex justify-between items-center mt-4">
+                  <p className="text-xs text-muted-foreground font-medium">{progress.toFixed(0)}% concluído</p>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => handleWithdraw(goal, 100)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-destructive hover:opacity-80 transition-all"
+                    >
+                      <ArrowDownCircle className="h-3.5 w-3.5" /> Retirar
+                    </button>
+                    <button 
+                      onClick={() => handleDeposit(goal, 100)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-success hover:opacity-80 transition-all"
+                    >
+                      <ArrowUpCircle className="h-3.5 w-3.5" /> Depositar
+                    </button>
+                  </div>
                 </div>
               </div>
             );

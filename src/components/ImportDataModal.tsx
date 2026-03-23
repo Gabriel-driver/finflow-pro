@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { toast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 
 const TEMPLATE_URL = "/import-template.xlsx";
 
@@ -47,7 +47,7 @@ export function ImportDataModal({ open, onClose, onSuccess }: { open: boolean; o
       if (res.ok) {
         setResult(data);
         setProgress(100);
-        toast({ title: "Importação concluída!", description: `${data.success} registros importados, ${data.failed} com erro.` });
+        toast.success("Importação concluída!", { description: `${data.success} registros importados, ${data.failed} com erro.` });
         onSuccess?.();
       } else {
         setError(data.error || "Erro ao importar dados");

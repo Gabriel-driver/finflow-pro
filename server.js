@@ -231,6 +231,35 @@ try {
       await pool.query(schemaSql);
       console.log('Database schema ensured (schema.sql applied)');
 
+      // Migration: Ensure all columns exist in transactions
+      await pool.query(`
+        DO $$ 
+        BEGIN 
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='credit_card_id') THEN
+            ALTER TABLE transactions ADD COLUMN credit_card_id INTEGER REFERENCES credit_cards(id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='installments') THEN
+            ALTER TABLE transactions ADD COLUMN installments INTEGER;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='current_installment') THEN
+            ALTER TABLE transactions ADD COLUMN current_installment INTEGER;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='parent_id') THEN
+            ALTER TABLE transactions ADD COLUMN parent_id INTEGER REFERENCES transactions(id);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='recurring') THEN
+            ALTER TABLE transactions ADD COLUMN recurring BOOLEAN DEFAULT FALSE;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='recurring_day') THEN
+            ALTER TABLE transactions ADD COLUMN recurring_day INTEGER;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='goals' AND column_name='icon') THEN
+            ALTER TABLE goals ADD COLUMN icon VARCHAR(10);
+          END IF;
+        END $$;
+      `);
+      console.log('Database migrations completed (columns checked)');
+
       // Optionally run an admin seed
       const existingAdmin = await pool.query('SELECT id FROM users WHERE id = 1');
       if (existingAdmin.rows.length === 0) {
@@ -241,6 +270,9 @@ try {
         );
         console.log('Admin user created (admin@finflow.com / admin123)');
       }
+      
+      // Process recurring rules on startup after database is ready
+      processRecurringRules();
     } catch (schemaError) {
       console.error('Error initializing database schema:', schemaError);
       addLog('ERROR', `Erro inicializando esquema: ${schemaError.message}`, 'system');
@@ -280,9 +312,204 @@ const protectedApis = [
   'settings',
   'budgets',
   'import',
+  'settings/change-password',
+  'recurring-rules',
 ];
 protectedApis.forEach((route) => {
   app.use(`/api/${route}`, authMiddleware);
+});
+
+// Background processor for recurring transactions
+async function processRecurringRules() {
+  if (!pool) return;
+  
+  const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  console.log(`[RECURRING] Processing rules for month: ${currentMonth}`);
+  
+  try {
+    const rulesRes = await pool.query(
+      `SELECT * FROM recurring_rules 
+       WHERE active = TRUE 
+       AND (last_processed_month IS NULL OR last_processed_month < $1)
+       AND (start_date <= CURRENT_DATE)
+       AND (end_date IS NULL OR end_date >= CURRENT_DATE)`,
+      [currentMonth]
+    );
+    
+    const rules = rulesRes.rows;
+    console.log(`[RECURRING] Found ${rules.length} rules to process`);
+    
+    for (const rule of rules) {
+      await pool.query('BEGIN');
+      try {
+        const transactionDate = new Date();
+        transactionDate.setDate(rule.recurring_day);
+        const dateStr = transactionDate.toISOString().split('T')[0];
+        
+        // Insert transaction
+        await pool.query(
+          `INSERT INTO transactions 
+           (user_id, account_id, credit_card_id, type, amount, category, description, date, recurring, recurring_day)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)`,
+          [rule.user_id, rule.account_id, rule.credit_card_id, rule.type, rule.amount, rule.category, `${rule.description} (Recorrente)`, dateStr, rule.recurring_day]
+        );
+        
+        // Update balance
+        if (rule.account_id) {
+          const balanceChange = rule.type === 'income' ? rule.amount : -rule.amount;
+          await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2', [balanceChange, rule.account_id]);
+        } else if (rule.credit_card_id) {
+          await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2', [rule.amount, rule.credit_card_id]);
+        }
+        
+        // Update rule
+        await pool.query(
+          'UPDATE recurring_rules SET last_processed_month = $1 WHERE id = $2',
+          [currentMonth, rule.id]
+        );
+
+        // Add notification
+        await pool.query(
+          'INSERT INTO notifications (user_id, title, message, type) VALUES ($1, $2, $3, $4)',
+          [rule.user_id, 'Conta Recorrente Processada', `A conta "${rule.description}" de R$ ${rule.amount.toFixed(2)} foi lançada automaticamente.`, 'success']
+        );
+        
+        await pool.query('COMMIT');
+        console.log(`[RECURRING] Processed rule: ${rule.description} for user ${rule.user_id}`);
+      } catch (err) {
+        await pool.query('ROLLBACK');
+        console.error(`[RECURRING] Error processing rule ${rule.id}:`, err);
+      }
+    }
+    
+    // Check for upcoming due dates (notifications)
+    await checkUpcomingDueDates();
+    
+  } catch (err) {
+    console.error('[RECURRING] Error fetching rules:', err);
+  }
+}
+
+async function checkUpcomingDueDates() {
+  if (!pool) return;
+  
+  try {
+    // 1. Check Credit Card due dates
+    const cards = await pool.query('SELECT * FROM credit_cards');
+    for (const card of cards.rows) {
+      const today = new Date();
+      const dueDay = card.due_day;
+      const currentDay = today.getDate();
+      
+      if (dueDay - currentDay <= 3 && dueDay - currentDay > 0) {
+        // Only notify if not notified in the last 24h
+        await pool.query(
+          `INSERT INTO notifications (user_id, title, message, type)
+           SELECT $1, $2, $3, $4
+           WHERE NOT EXISTS (
+             SELECT 1 FROM notifications 
+             WHERE user_id = $1 AND title = $2 AND date > NOW() - INTERVAL '24 hours'
+           )`,
+          [card.user_id, 'Vencimento de Fatura', `A fatura do cartão "${card.name}" vence em ${dueDay - currentDay} dias.`, 'warning']
+        );
+      }
+    }
+
+    // 2. Check Budget limits
+    const settings = await pool.query('SELECT * FROM settings');
+    for (const set of settings.rows) {
+      if (set.monthly_budget > 0) {
+        const monthKey = new Date().toISOString().slice(0, 7);
+        const expensesRes = await pool.query(
+          "SELECT SUM(amount) as total FROM transactions WHERE user_id = $1 AND type = 'expense' AND date::text LIKE $2",
+          [set.user_id, `${monthKey}%`]
+        );
+        const totalExpenses = parseFloat(expensesRes.rows[0].total || 0);
+        
+        if (totalExpenses > set.monthly_budget * 0.8) {
+          await pool.query(
+            `INSERT INTO notifications (user_id, title, message, type)
+             SELECT $1, $2, $3, $4
+             WHERE NOT EXISTS (
+               SELECT 1 FROM notifications 
+               WHERE user_id = $1 AND title = $2 AND date > NOW() - INTERVAL '7 days'
+             )`,
+            [set.user_id, 'Alerta de Orçamento', `Você já utilizou mais de 80% do seu orçamento mensal (R$ ${totalExpenses.toFixed(2)} de R$ ${set.monthly_budget.toFixed(2)}).`, 'danger']
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[NOTIFICATIONS] Error checking due dates:', err);
+  }
+}
+
+// Recurring Rules API
+app.get('/api/recurring-rules', async (req, res) => {
+  const userId = getUserId(req);
+  if (!pool) return res.json([]);
+  try {
+    const result = await pool.query('SELECT * FROM recurring_rules WHERE user_id = $1 ORDER BY recurring_day', [userId]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/recurring-rules', async (req, res) => {
+  const userId = getUserId(req);
+  const { account_id, credit_card_id, type, amount, category, description, recurring_day, end_date } = req.body;
+  
+  if (!pool) return res.status(400).json({ error: 'Database not available' });
+  
+  try {
+    const result = await pool.query(
+      `INSERT INTO recurring_rules 
+       (user_id, account_id, credit_card_id, type, amount, category, description, recurring_day, end_date) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [userId, account_id, credit_card_id, type, amount, category, description, recurring_day, end_date]
+    );
+    
+    // Process rule immediately for the current month if applicable
+    await processRecurringRules();
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/recurring-rules/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+  const { account_id, credit_card_id, type, amount, category, description, recurring_day, active, end_date } = req.body;
+  
+  if (!pool) return res.status(400).json({ error: 'Database not available' });
+  
+  try {
+    const result = await pool.query(
+      `UPDATE recurring_rules 
+       SET account_id = $1, credit_card_id = $2, type = $3, amount = $4, category = $5, 
+           description = $6, recurring_day = $7, active = $8, end_date = $9 
+       WHERE id = $10 AND user_id = $11 RETURNING *`,
+      [account_id, credit_card_id, type, amount, category, description, recurring_day, active, end_date, id, userId]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/recurring-rules/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+  if (!pool) return res.status(400).json({ error: 'Database not available' });
+  try {
+    await pool.query('DELETE FROM recurring_rules WHERE id = $1 AND user_id = $2', [id, userId]);
+    res.json({ message: 'Regra deletada com sucesso' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Error tracking for all API outcomes
@@ -640,20 +867,283 @@ app.get('/api/transactions', async (req, res) => {
 
 app.post('/api/transactions', async (req, res) => {
   const userId = getUserId(req);
+  const { accountId, account_id, creditCardId, credit_card_id, type, amount, category, description, date, installments, currentInstallment, current_installment, parentId, parent_id, recurring, recurringDay, recurring_day } = req.body;
+  
+  const final_account_id = accountId || account_id ? parseInt(accountId || account_id) : null;
+  const final_credit_card_id = creditCardId || credit_card_id ? parseInt(creditCardId || credit_card_id) : null;
+  const final_current_installment = currentInstallment || current_installment || 1;
+  const final_parent_id = (parentId || parent_id) ? parseInt(parentId || parent_id) : null;
+  const final_recurring = (recurring === true || recurring === 'true');
+  const final_recurring_day = recurringDay || recurring_day || 0;
+  const final_amount = parseFloat(amount);
+
+  console.log('[POST /api/transactions] Recebido:', { userId, final_account_id, final_credit_card_id, type, final_amount, description, final_recurring });
+
   if (!pool) {
-    const newTransaction = { ...req.body, id: mockTransactions.length + 1, user_id: userId };
+    const newTransaction = { 
+      ...req.body, 
+      account_id: final_account_id,
+      credit_card_id: final_credit_card_id,
+      current_installment: final_current_installment,
+      parent_id: final_parent_id,
+      recurring: final_recurring,
+      recurring_day: final_recurring_day,
+      id: mockTransactions.length + 1, 
+      user_id: userId 
+    };
     mockTransactions.push(newTransaction);
+    
+    // Update balance in mock data
+    if (final_account_id) {
+      const account = mockAccounts.find(a => a.id === final_account_id);
+      if (account) {
+        if (type === 'income') account.balance += final_amount;
+        else account.balance -= final_amount;
+      }
+    } else if (final_credit_card_id) {
+      const card = mockCreditCards.find(c => c.id === final_credit_card_id);
+      if (card) {
+        card.used += final_amount;
+      }
+    }
+    
     res.json(newTransaction);
     return;
   }
-  const { account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day } = req.body;
+  
   try {
+    await pool.query('BEGIN');
+    
+    const numInstallments = installments ? parseInt(installments) : 1;
+    const results = [];
+    let currentParentId = null;
+
+    for (let i = 0; i < numInstallments; i++) {
+      const current_installment = i + 1;
+      const transactionDate = new Date(date);
+      if (isNaN(transactionDate.getTime())) {
+        throw new Error('Data inválida fornecida');
+      }
+      transactionDate.setMonth(transactionDate.getMonth() + i);
+      const dateStr = transactionDate.toISOString().split('T')[0];
+      
+      const installmentDescription = numInstallments > 1 
+        ? `${description} (${current_installment}/${numInstallments})`
+        : description;
+
+      const result = await pool.query(
+        'INSERT INTO transactions (user_id, account_id, credit_card_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
+        [userId, final_account_id, final_credit_card_id, type, final_amount, category, installmentDescription, dateStr, numInstallments, current_installment, currentParentId, final_recurring, final_recurring_day]
+      );
+      
+      const newTx = result.rows[0];
+      results.push(newTx);
+      
+      if (i === 0) {
+        currentParentId = newTx.id;
+        // Update the first one to set itself as parent if it has installments
+        if (numInstallments > 1) {
+          await pool.query('UPDATE transactions SET parent_id = $1 WHERE id = $1', [newTx.id]);
+          newTx.parent_id = newTx.id;
+        }
+
+        // Only update balance for the FIRST installment (or if it's not a credit card)
+        // Usually, credit card transactions deduct from limit immediately, but 
+        // for "account" transactions, we only deduct the first one now? 
+        // Actually, if it's an account expense, usually it's a "scheduled" future launch.
+        // Let's only update balance for the FIRST installment if it's today or past.
+        const today = new Date().toISOString().split('T')[0];
+        if (dateStr <= today) {
+          if (final_account_id) {
+            const balanceChange = type === 'income' ? final_amount : -final_amount;
+            await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
+          } else if (final_credit_card_id) {
+            await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [final_amount, final_credit_card_id, userId]);
+          }
+        }
+      } else {
+        // Update parent_id for subsequent installments
+        await pool.query('UPDATE transactions SET parent_id = $1 WHERE id = $2', [currentParentId, newTx.id]);
+      }
+    }
+    
+    await pool.query('COMMIT');
+    res.json(results[0]);
+  } catch (err) {
+    console.error('[ERROR] Erro ao processar transação:', err);
+    await pool.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/transactions/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+  const { accountId, account_id, creditCardId, credit_card_id, type, amount, category, description, date } = req.body;
+  const final_account_id = accountId || account_id ? parseInt(accountId || account_id) : null;
+  const final_credit_card_id = creditCardId || credit_card_id ? parseInt(creditCardId || credit_card_id) : null;
+
+  if (!pool) {
+    const index = mockTransactions.findIndex(t => t.id === parseInt(id) && t.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Transação não encontrada' });
+    
+    const oldTx = mockTransactions[index];
+    const today = new Date().toISOString().split('T')[0];
+    const oldTxDate = new Date(oldTx.date).toISOString().split('T')[0];
+    const oldAmount = parseFloat(oldTx.amount);
+
+    // Revert old balance if it was in the past/today
+    if (oldTxDate <= today) {
+      if (oldTx.account_id) {
+        const oldAccount = mockAccounts.find(a => a.id === oldTx.account_id);
+        if (oldAccount) {
+          if (oldTx.type === 'income') oldAccount.balance -= oldAmount;
+          else oldAccount.balance += oldAmount;
+        }
+      } else if (oldTx.credit_card_id) {
+        const oldCard = mockCreditCards.find(c => c.id === oldTx.credit_card_id);
+        if (oldCard) oldCard.used -= oldAmount;
+      }
+    }
+    
+    // Apply new balance if new date is in the past/today
+    const newAmount = parseFloat(amount);
+    const newTxDate = new Date(date).toISOString().split('T')[0];
+    if (newTxDate <= today) {
+      if (final_account_id) {
+        const newAccount = mockAccounts.find(a => a.id === final_account_id);
+        if (newAccount) {
+          if (type === 'income') newAccount.balance += newAmount;
+          else newAccount.balance -= newAmount;
+        }
+      } else if (final_credit_card_id) {
+        const newCard = mockCreditCards.find(c => c.id === final_credit_card_id);
+        if (newCard) newCard.used += newAmount;
+      }
+    }
+
+    mockTransactions[index] = { ...oldTx, ...req.body, id: parseInt(id), user_id: userId, account_id: final_account_id, credit_card_id: final_credit_card_id, amount: newAmount };
+    return res.json(mockTransactions[index]);
+  }
+
+  try {
+    await pool.query('BEGIN');
+    
+    const oldTxRes = await pool.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    if (oldTxRes.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ error: 'Transação não encontrada' });
+    }
+    const oldTx = oldTxRes.rows[0];
+    const today = new Date().toISOString().split('T')[0];
+    const oldTxDate = new Date(oldTx.date).toISOString().split('T')[0];
+    const oldAmount = parseFloat(oldTx.amount);
+
+    // Revert old balance if it was in the past/today
+    if (oldTxDate <= today) {
+      if (oldTx.account_id) {
+        const balanceChange = oldTx.type === 'income' ? -oldAmount : oldAmount;
+        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, oldTx.account_id, userId]);
+      } else if (oldTx.credit_card_id) {
+        await pool.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [oldAmount, oldTx.credit_card_id, userId]);
+      }
+    }
+
+    // Update transaction
+    const finalAmount = parseFloat(amount);
     const result = await pool.query(
-      'INSERT INTO transactions (user_id, account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
-      [userId, account_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day]
+      'UPDATE transactions SET account_id = $1, credit_card_id = $2, type = $3, amount = $4, category = $5, description = $6, date = $7 WHERE id = $8 AND user_id = $9 RETURNING *',
+      [final_account_id, final_credit_card_id, type, finalAmount, category, description, date, id, userId]
     );
+
+    // Apply new balance if new date is in the past/today
+    const newTxDate = new Date(date).toISOString().split('T')[0];
+    if (newTxDate <= today) {
+      if (final_account_id) {
+        const balanceChange = type === 'income' ? finalAmount : -finalAmount;
+        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
+      } else if (final_credit_card_id) {
+        await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [finalAmount, final_credit_card_id, userId]);
+      }
+    }
+
+    await pool.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
+    await pool.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/transactions/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+
+  if (!pool) {
+    const index = mockTransactions.findIndex(t => t.id === parseInt(id) && t.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Transação não encontrada' });
+    
+    const tx = mockTransactions[index];
+    const today = new Date().toISOString().split('T')[0];
+    const txDate = new Date(tx.date).toISOString().split('T')[0];
+    const txAmount = parseFloat(tx.amount);
+
+    // Reverter saldo se a transação for no passado ou hoje
+    if (txDate <= today) {
+      if (tx.account_id) {
+        const account = mockAccounts.find(a => a.id === tx.account_id);
+        if (account) {
+          if (tx.type === 'income') account.balance -= txAmount;
+          else account.balance += txAmount;
+        }
+      } else if (tx.credit_card_id) {
+        const card = mockCreditCards.find(c => c.id === tx.credit_card_id);
+        if (card) {
+          // No cartão de crédito, despesas aumentam o 'used', então remover diminui o 'used'
+          card.used -= txAmount;
+        }
+      }
+    }
+    
+    mockTransactions.splice(index, 1);
+    return res.json({ message: 'Deletado com sucesso' });
+  }
+
+  try {
+    await pool.query('BEGIN');
+    
+    // Buscar a transação antes de deletar para saber o que reverter
+    const txRes = await pool.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    if (txRes.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ error: 'Transação não encontrada' });
+    }
+    
+    const tx = txRes.rows[0];
+    const today = new Date().toISOString().split('T')[0];
+    const txDate = new Date(tx.date).toISOString().split('T')[0];
+    const txAmount = parseFloat(tx.amount);
+
+    // Reverter saldo/limite se a data for hoje ou no passado
+    if (txDate <= today) {
+      if (tx.account_id) {
+        const balanceChange = tx.type === 'income' ? -txAmount : txAmount;
+        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, tx.account_id, userId]);
+      } else if (tx.credit_card_id) {
+        // No cartão de crédito, o valor gasto é positivo em 'used'. Remover transação diminui o 'used'.
+        await pool.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [txAmount, tx.credit_card_id, userId]);
+      }
+    }
+
+    // Se tiver parent_id, pode ser parte de um parcelamento. 
+    // Por simplicidade, vamos deletar apenas a transação específica solicitada.
+    await pool.query('DELETE FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    
+    await pool.query('COMMIT');
+    res.json({ message: 'Deletada com sucesso' });
+  } catch (err) {
+    console.error('[ERROR DELETE /api/transactions/:id]:', err.message);
+    await pool.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
@@ -676,21 +1166,35 @@ app.get('/api/credit-cards', async (req, res) => {
 
 app.post('/api/credit-cards', async (req, res) => {
   const userId = getUserId(req);
+  const { name, icon, limit, used, closingDay, dueDay, color } = req.body;
+  
+  console.log('[POST /api/credit-cards] Recebido:', { userId, name, limit, closingDay, dueDay });
+
   if (!pool) {
-    const newCard = { ...req.body, id: mockCreditCards.length + 1, user_id: userId };
+    const newCard = { 
+      name, icon, limit, used, 
+      closing_day: closingDay, 
+      due_day: dueDay, 
+      color, 
+      id: mockCreditCards.length + 1, 
+      user_id: userId 
+    };
     mockCreditCards.push(newCard);
     res.json(newCard);
     return;
   }
-  const { name, icon, limit, used, closing_day, due_day, color } = req.body;
+  
   try {
     const result = await pool.query(
       'INSERT INTO credit_cards (user_id, name, icon, "limit", used, closing_day, due_day, color) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [userId, name, icon, limit, used, closing_day, due_day, color]
+      [userId, name, icon, parseFloat(limit) || 0, parseFloat(used) || 0, parseInt(closingDay) || 1, parseInt(dueDay) || 1, color]
     );
+    console.log('[POST /api/credit-cards] Sucesso:', result.rows[0].id);
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[ERROR SQL /api/credit-cards]:', err.message);
+    console.error('[ERROR DETAIL]:', err.detail);
+    res.status(500).json({ error: `Erro no banco de dados: ${err.message}` });
   }
 });
 
@@ -710,6 +1214,56 @@ app.get('/api/goals', async (req, res) => {
   }
 });
 
+app.put('/api/credit-cards/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+  const { name, icon, limit, used, closingDay, dueDay, color } = req.body;
+
+  if (!pool) {
+    const index = mockCreditCards.findIndex(c => c.id === parseInt(id) && c.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Cartão não encontrado' });
+    mockCreditCards[index] = { ...mockCreditCards[index], ...req.body, id: parseInt(id) };
+    return res.json(mockCreditCards[index]);
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE credit_cards SET name = $1, icon = $2, "limit" = $3, used = $4, closing_day = $5, due_day = $6, color = $7 WHERE id = $8 AND user_id = $9 RETURNING *',
+      [name, icon, parseFloat(limit) || 0, parseFloat(used) || 0, parseInt(closingDay) || 1, parseInt(dueDay) || 1, color, id, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Cartão não encontrado' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[ERROR SQL /api/credit-cards/:id]:', err.message);
+    res.status(500).json({ error: `Erro no banco de dados: ${err.message}` });
+  }
+});
+
+app.delete('/api/credit-cards/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+
+  if (!pool) {
+    const index = mockCreditCards.findIndex(c => c.id === parseInt(id) && c.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Cartão não encontrado' });
+    mockCreditCards.splice(index, 1);
+    return res.json({ message: 'Deletado com sucesso' });
+  }
+
+  try {
+    const result = await pool.query('DELETE FROM credit_cards WHERE id = $1 AND user_id = $2', [id, userId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Cartão não encontrado' });
+    }
+    res.json({ message: 'Deletado com sucesso' });
+  } catch (err) {
+    console.error('[ERROR SQL /api/credit-cards/:id]:', err.message);
+    res.status(500).json({ error: `Erro no banco de dados: ${err.message}` });
+  }
+});
+
 app.post('/api/goals', async (req, res) => {
   const userId = getUserId(req);
   if (!pool) {
@@ -718,13 +1272,57 @@ app.post('/api/goals', async (req, res) => {
     res.json(newGoal);
     return;
   }
-  const { name, target, current, deadline, color } = req.body;
+  const { name, target, current, deadline, color, icon } = req.body;
   try {
     const result = await pool.query(
-      'INSERT INTO goals (user_id, name, target, current, deadline, color) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [userId, name, target, current, deadline, color]
+      'INSERT INTO goals (user_id, name, target, current, deadline, color, icon) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [userId, name, target, current, deadline, color, icon]
     );
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/goals/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+  const { name, target, current, deadline, color, icon } = req.body;
+
+  if (!pool) {
+    const index = mockGoals.findIndex(g => g.id === parseInt(id) && g.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Meta não encontrada' });
+    mockGoals[index] = { ...mockGoals[index], ...req.body };
+    return res.json(mockGoals[index]);
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE goals SET name = $1, target = $2, current = $3, deadline = $4, color = $5, icon = $6 WHERE id = $7 AND user_id = $8 RETURNING *',
+      [name, target, current, deadline, color, icon, id, userId]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Meta não encontrada' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/goals/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { id } = req.params;
+
+  if (!pool) {
+    const index = mockGoals.findIndex(g => g.id === parseInt(id) && g.user_id === userId);
+    if (index === -1) return res.status(404).json({ error: 'Meta não encontrada' });
+    mockGoals.splice(index, 1);
+    return res.json({ message: 'Deletado com sucesso' });
+  }
+
+  try {
+    const result = await pool.query('DELETE FROM goals WHERE id = $1 AND user_id = $2', [id, userId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Meta não encontrada' });
+    res.json({ message: 'Deletado com sucesso' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -785,31 +1383,51 @@ app.post('/api/monthly-plans', async (req, res) => {
 // Settings
 app.get('/api/settings', async (req, res) => {
   const userId = getUserId(req);
+  
   if (!pool) {
+    const user = mockUsers.find(u => u.id === userId);
     const userSettings = mockSettings.find(s => s.user_id === userId);
-    const response = userSettings ? {
-      userName: userSettings.user_name || userSettings.userName,
-      email: userSettings.email,
-      currency: userSettings.currency,
-      language: userSettings.language,
-      notificationsEnabled: userSettings.notifications_enabled || userSettings.notificationsEnabled,
-      alertDaysBefore: userSettings.alert_days_before || userSettings.alertDaysBefore,
-      monthlyBudget: userSettings.monthly_budget || userSettings.monthlyBudget,
-      darkMode: userSettings.dark_mode || userSettings.darkMode,
-      systemName: userSettings.system_name || userSettings.systemName || defaultSystemName,
-    } : { systemName: defaultSystemName };
+    
+    const response = {
+      userName: userSettings?.user_name || userSettings?.userName || user?.username || 'Usuário',
+      email: user?.email || userSettings?.email || '',
+      currency: userSettings?.currency || 'BRL',
+      language: userSettings?.language || 'pt-BR',
+      notificationsEnabled: userSettings?.notifications_enabled ?? userSettings?.notificationsEnabled ?? true,
+      alertDaysBefore: userSettings?.alert_days_before ?? userSettings?.alertDaysBefore ?? 3,
+      monthlyBudget: userSettings?.monthly_budget ?? userSettings?.monthlyBudget ?? 8000,
+      darkMode: userSettings?.dark_mode ?? userSettings?.darkMode ?? true,
+      systemName: userSettings?.system_name || userSettings?.systemName || defaultSystemName,
+    };
     res.json(response);
     return;
   }
+
   try {
     const result = await pool.query('SELECT * FROM settings WHERE user_id = $1', [userId]);
     const row = result.rows[0];
+    
+    // Always get current email and username from users table to ensure it's fresh
+    const userRes = await pool.query('SELECT username, email FROM users WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
+
     if (!row) {
-      return res.json({});
+      return res.json({
+        userName: user?.username || 'Usuário',
+        email: user?.email || '',
+        currency: 'BRL',
+        language: 'pt-BR',
+        notificationsEnabled: true,
+        alertDaysBefore: 3,
+        monthlyBudget: 8000,
+        darkMode: true,
+        systemName: defaultSystemName
+      });
     }
+
     res.json({
-      userName: row.user_name,
-      email: row.email,
+      userName: row.user_name || user?.username,
+      email: user?.email || row.email,
       currency: row.currency,
       language: row.language,
       notificationsEnabled: row.notifications_enabled,
@@ -911,6 +1529,42 @@ app.put('/api/settings', async (req, res) => {
       monthlyBudget: parseFloat(changed.monthly_budget),
       darkMode: changed.dark_mode,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Change Password
+app.post('/api/settings/change-password', async (req, res) => {
+  const userId = getUserId(req);
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Senha atual e nova senha são obrigatórias' });
+  }
+
+  try {
+    if (pool) {
+      const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+      const user = result.rows[0];
+
+      if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+        return res.status(401).json({ error: 'Senha atual incorreta' });
+      }
+
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedNewPassword, userId]);
+      
+      addLog('INFO', `Usuário alterou a senha`, req.user.username);
+      res.json({ message: 'Senha alterada com sucesso' });
+    } else {
+      const user = mockUsers.find(u => u.id === userId);
+      if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+        return res.status(401).json({ error: 'Senha atual incorreta' });
+      }
+      user.password_hash = await bcrypt.hash(newPassword, 10);
+      res.json({ message: 'Senha alterada com sucesso' });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1116,6 +1770,8 @@ if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   const serverHost = process.env.HOST || '0.0.0.0';
   app.listen(port, serverHost, () => {
     console.log(`Server running on ${serverHost}:${port}`);
+    // Run recurring rule processor every hour
+    setInterval(processRecurringRules, 3600000);
   });
 }
 

@@ -1,18 +1,34 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
 import { MonthSelector, useMonthNav } from "@/components/MonthSelector";
-import { Plus, ArrowUpRight, ArrowDownRight, Search, Trash2, RefreshCw } from "lucide-react";
+import { Plus, ArrowUpRight, ArrowDownRight, Search, Trash2, RefreshCw, Pencil } from "lucide-react";
 import { useState } from "react";
 import { NewTransactionModal } from "@/components/NewTransactionModal";
 
 export default function Transactions() {
-  const { transactions, accounts, deleteTransaction } = useFinance();
+  const { transactions, getProjectedTransactions, accounts, categories, creditCards, deleteTransaction } = useFinance();
   const [filter, setFilter] = useState<"all" | "income" | "expense">("all");
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [editTransaction, setEditTransaction] = useState<any>(null);
   const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
 
-  const monthTxs = transactions.filter(t => t.date.startsWith(monthKey));
+  const handleEdit = (tx: any) => {
+    setEditTransaction(tx);
+    setModalOpen(true);
+  };
+
+  const handleCloseModal = (open: boolean) => {
+    setModalOpen(open);
+    if (!open) setEditTransaction(null);
+  };
+
+  const projectedTxs = getProjectedTransactions(monthKey);
+  const monthTxs = [
+    ...transactions.filter(t => t.date.startsWith(monthKey)),
+    ...projectedTxs
+  ];
+  
   const sorted = [...monthTxs].sort((a, b) => b.date.localeCompare(a.date));
   const filtered = sorted
     .filter(t => filter === "all" || t.type === filter)
@@ -25,7 +41,7 @@ export default function Transactions() {
     <AppLayout title="Transações">
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
-          <MonthSelector currentDate={currentDate} onPrev={prevMonth} onNext={nextMonth} />
+          <MonthSelector currentDate={currentDate} prevMonth={prevMonth} nextMonth={nextMonth} />
           <button onClick={() => setModalOpen(true)} className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium text-sm hover:opacity-90 transition-opacity active:scale-[0.97]">
             <Plus className="h-4 w-4" /> Nova Transação
           </button>
@@ -60,43 +76,80 @@ export default function Transactions() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-border/50">
-                  <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Transação</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Conta</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">Data</th>
-                  <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Valor</th>
-                  <th className="px-3 py-3 w-10"></th>
+                <tr className="border-b border-border/20">
+                  <th className="px-5 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Transação</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Categoria</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Conta/Cartão</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Pagamento</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider hidden md:table-cell">Data</th>
+                  <th className="px-5 py-4 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">Valor</th>
+                  <th className="px-3 py-4"></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border/10">
                 {filtered.map(tx => {
-                  const account = accounts.find(a => a.id === tx.accountId);
+                  const account = accounts.find(a => a.id === (tx.accountId || tx.account_id));
+                  const card = creditCards.find(c => c.id === (tx.creditCardId || tx.credit_card_id));
+                  const category = categories?.find(c => c.name === tx.category);
+                  
                   return (
                     <tr key={tx.id} className="border-b border-border/20 hover:bg-muted/15 transition-colors group">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${tx.type === "income" ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"}`}>
-                            {tx.type === "income" ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
+                          <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${tx.type === "income" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                            {tx.type === "income" ? <ArrowUpRight className="h-5 w-5" /> : <ArrowDownRight className="h-5 w-5" />}
                           </div>
                           <div>
-                            <p className="text-sm font-medium">{tx.description}</p>
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <span>{tx.category}</span>
-                              {tx.recurring && <RefreshCw className="h-3 w-3 text-primary" />}
-                              {tx.installments && <span className="text-primary">({tx.currentInstallment}/{tx.installments})</span>}
-                            </div>
+                            <p className="text-sm font-semibold">{tx.description}</p>
+                            <p className="text-[11px] text-muted-foreground sm:hidden">{category?.icon} {tx.category}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground hidden sm:table-cell">{account?.icon} {account?.name}</td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground hidden md:table-cell tabular-nums">{new Date(tx.date).toLocaleDateString("pt-BR")}</td>
+                      <td className="px-5 py-4 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <span>{category?.icon || "📁"}</span>
+                          {tx.category}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-sm text-muted-foreground hidden sm:table-cell">
+                        {account ? (
+                          <span className="flex items-center gap-1.5">
+                            <span>{account.icon}</span>
+                            {account.name}
+                          </span>
+                        ) : card ? (
+                          <span className="flex items-center gap-1.5">
+                            <span>💳</span>
+                            {card.name}
+                          </span>
+                        ) : "-"}
+                      </td>
+                      <td className="px-5 py-4 text-sm text-muted-foreground hidden sm:table-cell">
+                        {tx.installments ? (
+                          <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">
+                            {tx.currentInstallment || 1}/{tx.installments}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
+                            À vista
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-sm text-muted-foreground hidden md:table-cell tabular-nums">
+                        {new Date(tx.date).toLocaleDateString("pt-BR")}
+                      </td>
                       <td className={`px-5 py-4 text-sm font-semibold text-right tabular-nums ${tx.type === "income" ? "text-success" : "text-destructive"}`}>
                         {tx.type === "income" ? "+" : "-"}{formatCurrency(tx.amount)}
                       </td>
                       <td className="px-3 py-4">
-                        <button onClick={() => deleteTransaction(tx.id)} className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={() => handleEdit(tx)} className="p-1 rounded text-muted-foreground hover:text-primary">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => deleteTransaction(tx.id)} className="p-1 rounded text-muted-foreground hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -107,7 +160,7 @@ export default function Transactions() {
           {filtered.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma transação encontrada neste mês</div>}
         </div>
       </div>
-      <NewTransactionModal open={modalOpen} onOpenChange={setModalOpen} />
+      <NewTransactionModal open={modalOpen} onOpenChange={handleCloseModal} editTransaction={editTransaction} />
     </AppLayout>
   );
 }

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Wallet, ArrowLeftRight, Tags, Target, LogOut, CreditCard, CalendarDays, Bell, Settings, FileBarChart, DollarSign, ArrowDownToLine } from "lucide-react";
+import { LayoutDashboard, Wallet, ArrowLeftRight, Tags, Target, LogOut, CreditCard, CalendarDays, Bell, Settings, FileBarChart, DollarSign, ArrowDownToLine, RefreshCw } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
@@ -28,6 +28,7 @@ const navSections = [
     items: [
       { title: "Contas", url: "/accounts", icon: Wallet },
       { title: "Transações", url: "/transactions", icon: ArrowLeftRight },
+      { title: "Contas Recorrentes", url: "/recurring", icon: RefreshCw },
       { title: "Cartões", url: "/credit-cards", icon: CreditCard },
     ],
   },
@@ -65,6 +66,16 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { getUnreadNotifications, settings } = useFinance();
   const unread = getUnreadNotifications();
+  
+  // Update systemName whenever settings change
+  const [systemName, setSystemName] = useState(settings.systemName || "FinFlow Pro");
+  
+  useEffect(() => {
+    if (settings.systemName) {
+      setSystemName(settings.systemName);
+    }
+  }, [settings.systemName]);
+
   // Sempre mantém uma seção aberta (acordeão)
   const [openSection, setOpenSection] = useState<string>(() => {
     // Se a rota atual pertence a alguma seção, abre ela; senão, abre a primeira
@@ -79,8 +90,6 @@ export function AppSidebar() {
       setOpenSection(found.key);
     }
   }, [location.pathname]);
-
-  const systemName = settings.systemName || "Continhas da Duda";
 
   // Só muda a seção aberta ao clicar no header de outro grupo
   // Só muda a seção aberta ao clicar no header de outro grupo

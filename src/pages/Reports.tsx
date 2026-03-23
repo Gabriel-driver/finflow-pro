@@ -1,17 +1,25 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
 import { MonthSelector, useMonthNav } from "@/components/MonthSelector";
-import { Download, FileText, FileSpreadsheet, BarChart3, PieChart as PieChartIcon } from "lucide-react";
+import { Download, FileText, FileSpreadsheet, BarChart3, PieChart as PieChartIcon, TrendingUp, TrendingDown, Calendar, ArrowUpRight, ArrowDownRight, Info } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area } from "recharts";
 import { toast } from "sonner";
 
 export default function Reports() {
-  const { transactions, accounts, categories, creditCards, getCategorySpending, getTotalIncome, getTotalExpenses } = useFinance();
+  const { transactions, getProjectedTransactions, accounts, categories, creditCards, getCategorySpending, getTotalIncome, getTotalExpenses, settings } = useFinance();
   const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
 
-  const monthTxs = transactions.filter(t => t.date.startsWith(monthKey));
+  const systemName = settings.systemName || "FinFlow Pro";
+
+  const projectedTxs = getProjectedTransactions(monthKey);
+  const monthTxs = [
+    ...transactions.filter(t => t.date.startsWith(monthKey)),
+    ...projectedTxs
+  ];
+  
   const income = monthTxs.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const expense = monthTxs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const balance = income - expense;
 
   const catColors = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))", "hsl(var(--warning))"];
   const expenseCats = categories.filter(c => c.type === "expense").map((cat, i) => ({
@@ -36,16 +44,18 @@ export default function Reports() {
   const tooltipStyle = { background: "hsl(240 5% 12%)", border: "1px solid hsl(240 4% 16%)", borderRadius: 8, color: "hsl(220 14% 92%)" };
 
   const exportCSV = () => {
-    const headers = "Data;Descrição;Categoria;Tipo;Valor;Conta\n";
+    const headers = "Data;Descrição;Categoria;Tipo;Valor;Origem\n";
     const rows = monthTxs.sort((a, b) => a.date.localeCompare(b.date)).map(t => {
       const acc = accounts.find(a => a.id === t.accountId);
-      return `${new Date(t.date).toLocaleDateString("pt-BR")};"${t.description}";"${t.category}";${t.type === "income" ? "Entrada" : "Saída"};${t.amount.toFixed(2).replace(".", ",")};"${acc?.name || ""}"`;
+      const card = creditCards.find(c => c.id === t.creditCardId);
+      const origin = acc ? acc.name : (card ? `Cartão: ${card.name}` : "");
+      return `${new Date(t.date).toLocaleDateString("pt-BR")};"${t.description}";"${t.category}";${t.type === "income" ? "Entrada" : "Saída"};${t.amount.toFixed(2).replace(".", ",")};"${origin}"`;
     }).join("\n");
 
     const summary = `\n\nRESUMO\nTotal Entradas;${income.toFixed(2).replace(".", ",")}\nTotal Saídas;${expense.toFixed(2).replace(".", ",")}\nSaldo;${(income - expense).toFixed(2).replace(".", ",")}`;
     const blob = new Blob(["\uFEFF" + headers + rows + summary], { type: "text/csv;charset=utf-8;" });
     downloadBlob(blob, `extrato-${monthKey}.csv`);
-    toast.success("Extrato CSV exportado!");
+    toast.success("Extrato exportado com sucesso!");
   };
 
   const exportPDF = () => {
@@ -64,7 +74,7 @@ export default function Reports() {
       .summary .label{font-size:12px;color:#888} .summary .val{font-size:20px;font-weight:bold}
       .footer{text-align:center;margin-top:40px;color:#aaa;font-size:11px}
     </style></head><body>`;
-    html += `<h1>📊 Continhas da Duda</h1>`;
+    html += `<h1>📊 ${systemName}</h1>`;
     html += `<h2>Extrato — ${monthLabel}</h2>`;
     html += `<div class="summary">
       <div><div class="label">Entradas</div><div class="val income">R$ ${income.toFixed(2).replace(".", ",")}</div></div>
@@ -87,7 +97,7 @@ export default function Reports() {
       html += `</table>`;
     }
 
-    html += `<div class="footer">Gerado em ${new Date().toLocaleString("pt-BR")} — Continhas da Duda</div></body></html>`;
+    html += `<div class="footer">Gerado em ${new Date().toLocaleString("pt-BR")} — ${systemName}</div></body></html>`;
 
     const blob = new Blob([html], { type: "application/pdf" });
     const printWin = window.open("", "_blank");
@@ -107,128 +117,193 @@ export default function Reports() {
   }
 
   return (
-    <AppLayout title="Relatórios">
+    <AppLayout title="Relatórios Analíticos">
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
-          <MonthSelector currentDate={currentDate} onPrev={prevMonth} onNext={nextMonth} />
+          <MonthSelector currentDate={currentDate} prevMonth={prevMonth} nextMonth={nextMonth} />
           <div className="flex gap-2">
-            <button onClick={exportPDF} className="flex items-center gap-2 px-4 py-2.5 bg-destructive/15 text-destructive rounded-lg text-sm font-medium hover:bg-destructive/25 transition-colors active:scale-[0.97]">
+            <button onClick={exportPDF} className="flex items-center gap-2 px-4 py-2.5 bg-destructive/10 text-destructive rounded-xl text-sm font-bold hover:bg-destructive/20 transition-all active:scale-[0.97] border border-destructive/20">
               <FileText className="h-4 w-4" /> PDF
             </button>
-            <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2.5 bg-success/15 text-success rounded-lg text-sm font-medium hover:bg-success/25 transition-colors active:scale-[0.97]">
-              <FileSpreadsheet className="h-4 w-4" /> CSV / Excel
+            <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2.5 bg-success/10 text-success rounded-xl text-sm font-bold hover:bg-success/20 transition-all active:scale-[0.97] border border-success/20">
+              <FileSpreadsheet className="h-4 w-4" /> EXCEL
             </button>
           </div>
         </div>
 
-        {/* Summary */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationFillMode: "backwards" }}>
-            <p className="text-sm text-muted-foreground mb-1">Entradas</p>
-            <p className="text-xl font-bold tabular-nums text-success">{formatCurrency(income)}</p>
-            <p className="text-xs text-muted-foreground mt-1">{monthTxs.filter(t => t.type === "income").length} transações</p>
+        {/* Top Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="glass-card p-5 rounded-2xl border-l-4 border-l-success relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
+              <TrendingUp className="h-12 w-12 text-success" />
+            </div>
+            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest mb-1">Entradas</p>
+            <p className="text-2xl font-black text-success tabular-nums">{formatCurrency(income)}</p>
+            <p className="text-[10px] text-muted-foreground mt-2 font-medium flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> {monthTxs.filter(t => t.type === "income").length} registros
+            </p>
           </div>
-          <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationDelay: "80ms", animationFillMode: "backwards" }}>
-            <p className="text-sm text-muted-foreground mb-1">Saídas</p>
-            <p className="text-xl font-bold tabular-nums text-destructive">{formatCurrency(expense)}</p>
-            <p className="text-xs text-muted-foreground mt-1">{monthTxs.filter(t => t.type === "expense").length} transações</p>
+
+          <div className="glass-card p-5 rounded-2xl border-l-4 border-l-destructive relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
+              <TrendingDown className="h-12 w-12 text-destructive" />
+            </div>
+            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest mb-1">Saídas</p>
+            <p className="text-2xl font-black text-destructive tabular-nums">{formatCurrency(expense)}</p>
+            <p className="text-[10px] text-muted-foreground mt-2 font-medium flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> {monthTxs.filter(t => t.type === "expense").length} registros
+            </p>
           </div>
-          <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationDelay: "160ms", animationFillMode: "backwards" }}>
-            <p className="text-sm text-muted-foreground mb-1">Saldo do Mês</p>
-            <p className={`text-xl font-bold tabular-nums ${income - expense >= 0 ? "text-success" : "text-destructive"}`}>{formatCurrency(income - expense)}</p>
+
+          <div className="glass-card p-5 rounded-2xl border-l-4 border-l-primary relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
+              <BarChart3 className="h-12 w-12 text-primary" />
+            </div>
+            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest mb-1">Resultado</p>
+            <p className={`text-2xl font-black tabular-nums ${balance >= 0 ? "text-primary" : "text-destructive"}`}>{formatCurrency(balance)}</p>
+            <p className="text-[10px] text-muted-foreground mt-2 font-medium">
+              Margem: {income > 0 ? ((balance / income) * 100).toFixed(1) : 0}%
+            </p>
+          </div>
+
+          <div className="glass-card p-5 rounded-2xl border-l-4 border-l-warning relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:scale-110 transition-transform">
+              <Info className="h-12 w-12 text-warning" />
+            </div>
+            <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest mb-1">Taxa de Poupança</p>
+            <p className="text-2xl font-black text-warning tabular-nums">
+              {income > 0 ? Math.max(0, (balance / income) * 100).toFixed(1) : 0}%
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-2 font-medium">Meta sugerida: 20%</p>
           </div>
         </div>
 
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationDelay: "240ms", animationFillMode: "backwards" }}>
-            <div className="flex items-center gap-2 mb-4">
-              <BarChart3 className="h-4 w-4 text-primary" />
-              <h3 className="font-semibold text-sm">Evolução 12 Meses</h3>
+          <div className="glass-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: "240ms", animationFillMode: "backwards" }}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="font-bold text-sm uppercase tracking-tight flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-primary" /> Histórico Anual
+              </h3>
             </div>
-            <ResponsiveContainer width="100%" height={260}>
+            <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={evolutionData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 16%)" />
+                <defs>
+                  <linearGradient id="reportIncome" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(152 60% 48%)" stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor="hsl(152 60% 48%)" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="reportExpense" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="hsl(0 72% 55%)" stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor="hsl(0 72% 55%)" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 16%)" vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: "hsl(220 8% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "hsl(220 8% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
-                <Area type="monotone" dataKey="income" fill="hsl(152 60% 48% / 0.15)" stroke="hsl(152 60% 48%)" name="Entradas" />
-                <Area type="monotone" dataKey="expense" fill="hsl(0 72% 55% / 0.15)" stroke="hsl(0 72% 55%)" name="Saídas" />
+                <YAxis tick={{ fill: "hsl(220 8% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `R$ ${v/1000}k`} />
+                <Tooltip 
+                  contentStyle={tooltipStyle} 
+                  cursor={{stroke: 'hsl(var(--primary) / 0.2)', strokeWidth: 2}}
+                  formatter={(v: number) => formatCurrency(v)} 
+                />
+                <Area type="monotone" dataKey="income" stroke="hsl(152 60% 48%)" strokeWidth={3} fillOpacity={1} fill="url(#reportIncome)" name="Receitas" />
+                <Area type="monotone" dataKey="expense" stroke="hsl(0 72% 55%)" strokeWidth={3} fillOpacity={1} fill="url(#reportExpense)" name="Despesas" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
 
-          <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationDelay: "320ms", animationFillMode: "backwards" }}>
-            <div className="flex items-center gap-2 mb-4">
-              <PieChartIcon className="h-4 w-4 text-primary" />
-              <h3 className="font-semibold text-sm">Gastos por Categoria</h3>
+          <div className="glass-card rounded-2xl p-6 animate-slide-up" style={{ animationDelay: "320ms", animationFillMode: "backwards" }}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="font-bold text-sm uppercase tracking-tight flex items-center gap-2">
+                <PieChartIcon className="h-4 w-4 text-primary" /> Raio-X de Gastos
+              </h3>
             </div>
             {expenseCats.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={200}>
-                  <PieChart>
-                    <Pie data={expenseCats} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3} dataKey="value">
-                      {expenseCats.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="space-y-1.5 mt-2">
+              <div className="flex flex-col md:flex-row items-center gap-8">
+                <div className="w-full md:w-1/2 h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={expenseCats} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value" stroke="none">
+                        {expenseCats.map((e, i) => <Cell key={i} fill={e.fill} />)}
+                      </Pie>
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="w-full md:w-1/2 space-y-3 max-h-[220px] overflow-y-auto pr-4 custom-scrollbar">
                   {expenseCats.map(c => (
-                    <div key={c.name} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ background: c.fill }} />
-                        <span className="text-muted-foreground">{c.icon} {c.name}</span>
+                    <div key={c.name} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-muted-foreground flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full" style={{ background: c.fill }} />
+                          {c.icon} {c.name}
+                        </span>
+                        <span className="font-black tabular-nums">{((c.value / expense) * 100).toFixed(0)}%</span>
                       </div>
-                      <span className="font-medium tabular-nums">{formatCurrency(c.value)}</span>
+                      <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ background: c.fill, width: `${(c.value / expense) * 100}%` }} />
+                      </div>
                     </div>
                   ))}
                 </div>
-              </>
-            ) : <p className="text-sm text-muted-foreground">Sem dados neste mês</p>}
+              </div>
+            ) : (
+              <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm border border-dashed border-border/40 rounded-xl">
+                Nenhuma despesa para analisar.
+              </div>
+            )}
           </div>
-        </div>
-
-        {/* Saldo evolução */}
-        <div className="glass-card rounded-xl p-5 animate-slide-up" style={{ animationDelay: "400ms", animationFillMode: "backwards" }}>
-          <h3 className="font-semibold text-sm mb-4">📈 Evolução do Saldo Mensal</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={evolutionData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 16%)" />
-              <XAxis dataKey="month" tick={{ fill: "hsl(220 8% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "hsl(220 8% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-              <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => formatCurrency(v)} />
-              <Line type="monotone" dataKey="balance" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ fill: "hsl(var(--primary))", r: 3 }} name="Saldo" />
-            </LineChart>
-          </ResponsiveContainer>
         </div>
 
         {/* Transaction list - bank statement style */}
-        <div className="glass-card rounded-xl overflow-hidden animate-slide-up" style={{ animationDelay: "480ms", animationFillMode: "backwards" }}>
-          <div className="px-5 py-3 border-b border-border/30">
-            <h3 className="font-semibold text-sm">📋 Extrato do Mês</h3>
+        <div className="glass-card rounded-2xl overflow-hidden animate-slide-up" style={{ animationDelay: "480ms", animationFillMode: "backwards" }}>
+          <div className="px-6 py-4 border-b border-border/30 bg-muted/20 flex items-center justify-between">
+            <h3 className="font-bold text-sm uppercase tracking-tight flex items-center gap-2">
+              <FileSpreadsheet className="h-4 w-4 text-primary" /> Detalhamento Mensal
+            </h3>
+            <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-1 rounded uppercase tracking-tighter">
+              {monthTxs.length} transações encontradas
+            </span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-border/40">
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">Data</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">Descrição</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Categoria</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">Conta</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">Valor</th>
+                <tr className="border-b border-border/40 bg-muted/10">
+                  <th className="px-6 py-3 text-[10px] font-black text-muted-foreground uppercase tracking-widest">Data</th>
+                  <th className="px-6 py-3 text-[10px] font-black text-muted-foreground uppercase tracking-widest">Descrição</th>
+                  <th className="px-6 py-3 text-[10px] font-black text-muted-foreground uppercase tracking-widest hidden sm:table-cell">Categoria</th>
+                  <th className="px-6 py-3 text-[10px] font-black text-muted-foreground uppercase tracking-widest hidden md:table-cell">Origem</th>
+                  <th className="px-6 py-3 text-[10px] font-black text-muted-foreground uppercase tracking-widest text-right">Valor</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border/10">
                 {monthTxs.sort((a, b) => a.date.localeCompare(b.date)).map(tx => {
                   const acc = accounts.find(a => a.id === tx.accountId);
+                  const card = creditCards.find(c => c.id === tx.creditCardId);
                   return (
-                    <tr key={tx.id} className="border-b border-border/15 hover:bg-muted/15 transition-colors">
-                      <td className="px-5 py-3 text-sm tabular-nums">{new Date(tx.date).toLocaleDateString("pt-BR")}</td>
-                      <td className="px-5 py-3 text-sm">{tx.description}</td>
-                      <td className="px-5 py-3 text-sm text-muted-foreground hidden sm:table-cell">{tx.category}</td>
-                      <td className="px-5 py-3 text-sm text-muted-foreground hidden md:table-cell">{acc?.icon} {acc?.name}</td>
-                      <td className={`px-5 py-3 text-sm font-semibold text-right tabular-nums ${tx.type === "income" ? "text-success" : "text-destructive"}`}>
+                    <tr key={tx.id} className="hover:bg-muted/20 transition-colors group">
+                      <td className="px-6 py-4 text-sm tabular-nums font-medium text-muted-foreground">
+                        {new Date(tx.date).toLocaleDateString("pt-BR", {day: '2-digit', month: '2-digit'})}
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-bold flex items-center gap-2">
+                          {tx.description}
+                          {tx.description.includes("(Projetado)") && (
+                            <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-black uppercase">Fixo</span>
+                          )}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4 hidden sm:table-cell">
+                        <span className="text-xs font-bold text-muted-foreground bg-muted/30 px-2 py-1 rounded-lg">
+                          {tx.category}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 hidden md:table-cell">
+                        <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                          {acc ? (<span>{acc.icon} {acc.name}</span>) : card ? (<span>💳 {card.name}</span>) : "-"}
+                        </span>
+                      </td>
+                      <td className={`px-6 py-4 text-sm font-black text-right tabular-nums ${tx.type === "income" ? "text-success" : "text-destructive"}`}>
                         {tx.type === "income" ? "+" : "-"}{formatCurrency(tx.amount)}
                       </td>
                     </tr>
@@ -237,7 +312,12 @@ export default function Reports() {
               </tbody>
             </table>
           </div>
-          {monthTxs.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma transação neste mês</div>}
+          {monthTxs.length === 0 && (
+            <div className="p-12 flex flex-col items-center justify-center text-center opacity-40">
+              <Calendar className="h-12 w-12 mb-4" />
+              <p className="text-sm font-bold uppercase tracking-widest">Nenhum registro no período</p>
+            </div>
+          )}
         </div>
       </div>
     </AppLayout>

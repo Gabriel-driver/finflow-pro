@@ -1,22 +1,25 @@
 import { AppLayout } from "@/components/AppLayout";
 import { useFinance, formatCurrency } from "@/lib/finance-store";
-import { useState } from "react";
-import { Calendar, TrendingUp, TrendingDown, PiggyBank, ChevronLeft, ChevronRight } from "lucide-react";
+import { MonthSelector, useMonthNav } from "@/components/MonthSelector";
+import { TrendingUp, TrendingDown, PiggyBank } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 export default function MonthlyPlan() {
-  const { transactions, categories, getCategorySpending, settings } = useFinance();
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const { transactions, categories, getCategorySpending, settings, getProjectedTransactions } = useFinance();
+  const { currentDate, monthKey, prevMonth, nextMonth } = useMonthNav();
 
-  const monthKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}`;
-  const monthLabel = currentDate.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const projectedTxs = getProjectedTransactions(monthKey);
+  const allMonthlyTransactions = [
+    ...transactions.filter(t => t.date.startsWith(monthKey)),
+    ...projectedTxs
+  ];
 
-  const monthIncome = transactions
-    .filter(t => t.type === "income" && t.date.startsWith(monthKey))
+  const monthIncome = allMonthlyTransactions
+    .filter(t => t.type === "income")
     .reduce((s, t) => s + t.amount, 0);
 
-  const monthExpense = transactions
-    .filter(t => t.type === "expense" && t.date.startsWith(monthKey))
+  const monthExpense = allMonthlyTransactions
+    .filter(t => t.type === "expense")
     .reduce((s, t) => s + t.amount, 0);
 
   const balance = monthIncome - monthExpense;
@@ -31,22 +34,23 @@ export default function MonthlyPlan() {
   })).filter(c => c.spent > 0 || c.limit > 0).sort((a, b) => b.spent - a.spent);
 
   // Recurring transactions this month
-  const recurring = transactions.filter(t => t.recurring && t.date.startsWith(monthKey));
+  const recurring = allMonthlyTransactions.filter(t => t.recurring);
 
   // Upcoming installments
-  const installments = transactions.filter(t => t.installments && t.currentInstallment && t.date.startsWith(monthKey));
-
-  // Navigate months
-  const prevMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(n.getMonth() - 1); return n; });
-  const nextMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(n.getMonth() + 1); return n; });
+  const installments = allMonthlyTransactions.filter(t => t.installments && t.currentInstallment);
 
   // Last 6 months data for chart
   const chartData = Array.from({ length: 6 }, (_, i) => {
     const d = new Date(currentDate);
     d.setMonth(d.getMonth() - (5 - i));
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const inc = transactions.filter(t => t.type === "income" && t.date.startsWith(key)).reduce((s, t) => s + t.amount, 0);
-    const exp = transactions.filter(t => t.type === "expense" && t.date.startsWith(key)).reduce((s, t) => s + t.amount, 0);
+    
+    const historicalTxs = transactions.filter(t => t.date.startsWith(key));
+    const projectedForHistorical = getProjectedTransactions(key);
+    const allForMonth = [...historicalTxs, ...projectedForHistorical];
+
+    const inc = allForMonth.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const exp = allForMonth.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { month: d.toLocaleDateString("pt-BR", { month: "short" }), income: inc, expense: exp };
   });
 
@@ -54,13 +58,8 @@ export default function MonthlyPlan() {
     <AppLayout title="Planejamento Mensal">
       <div className="space-y-6">
         {/* Month navigator */}
-        <div className="flex items-center justify-center gap-4 animate-fade-in">
-          <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"><ChevronLeft className="h-5 w-5" /></button>
-          <div className="flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold capitalize">{monthLabel}</h2>
-          </div>
-          <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"><ChevronRight className="h-5 w-5" /></button>
+        <div className="flex items-center justify-center animate-fade-in">
+          <MonthSelector currentDate={currentDate} prevMonth={prevMonth} nextMonth={nextMonth} />
         </div>
 
         {/* Summary cards */}
