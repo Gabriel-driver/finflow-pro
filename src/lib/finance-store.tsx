@@ -253,7 +253,9 @@ const fetchSettings = async (): Promise<Settings> => {
     notificationsEnabled: data.notificationsEnabled ?? data.notifications_enabled ?? true,
     alertDaysBefore: data.alertDaysBefore ?? data.alert_days_before ?? 3,
     monthlyBudget: data.monthlyBudget ?? data.monthly_budget ?? 8000,
-    darkMode: data.darkMode ?? data.dark_mode ?? true,    systemName: data.systemName || data.system_name || 'Continhas da Duda',  };
+    darkMode: data.darkMode ?? data.dark_mode ?? true,
+    systemName: data.systemName || data.system_name || 'Continhas da Duda',
+  };
 };
 
 const fetchNotifications = async (): Promise<Notification[]> => {
@@ -274,12 +276,26 @@ const updateSettings = async (settings: Settings): Promise<Settings> => {
   return res.json();
 };
 
+const changePassword = async ({ currentPassword, newPassword }: { currentPassword: string, newPassword: string }): Promise<void> => {
+  const res = await fetch(`${API_BASE}/settings/change-password`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  await handleUnauthorized(res);
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || 'Erro ao alterar senha');
+  }
+};
+
 const createGoal = async (goal: Omit<Goal, 'id'>): Promise<Goal> => {
   const res = await fetch(`${API_BASE}/goals`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(goal),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error('Failed to create goal');
   return res.json();
 };
@@ -297,6 +313,18 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const goalsQuery = useQuery({ queryKey: ['goals'], queryFn: fetchGoals });
   const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: fetchSettings });
   const notificationsQuery = useQuery({ queryKey: ['notifications'], queryFn: fetchNotifications });
+
+  const initialSettings: Settings = {
+    userName: getUser()?.username || "Usuário",
+    email: getUser()?.email || "",
+    currency: "BRL",
+    language: "pt-BR",
+    notificationsEnabled: true,
+    alertDaysBefore: 3,
+    monthlyBudget: 8000,
+    darkMode: true,
+    systemName: "FinFlow Pro",
+  };
 
   // Mutations
   const createAccountMutation = useMutation({
@@ -339,6 +367,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
   });
 
+  const changePasswordMutation = useMutation({
+    mutationFn: changePassword,
+  });
+
   const createGoalMutation = useMutation({
     mutationFn: createGoal,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['goals'] }),
@@ -350,19 +382,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     transactions: transactionsQuery.data || [],
     creditCards: creditCardsQuery.data || [],
     goals: goalsQuery.data || [],
-    settings: settingsQuery.data || {
-      userName: "Duda",
-      email: "duda@email.com",
-      currency: "BRL",
-      language: "pt-BR",
-      notificationsEnabled: true,
-      alertDaysBefore: 3,
-      monthlyBudget: 8000,
-      darkMode: true,
-      systemName: "Continhas da Duda",
-    },
+    settings: settingsQuery.data ? { ...initialSettings, ...settingsQuery.data } : initialSettings,
     notifications: notificationsQuery.data || [],
     isLoading: accountsQuery.isLoading || categoriesQuery.isLoading || transactionsQuery.isLoading || creditCardsQuery.isLoading || goalsQuery.isLoading || settingsQuery.isLoading || notificationsQuery.isLoading,
+    
+    // Actions
     createAccount: createAccountMutation.mutate,
     updateAccount: updateAccountMutation.mutate,
     deleteAccount: deleteAccountMutation.mutate,
@@ -371,7 +395,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deleteTransaction: deleteTransactionMutation.mutate,
     createCreditCard: createCreditCardMutation.mutate,
     updateSettings: updateSettingsMutation.mutate,
+    changePassword: changePasswordMutation.mutateAsync,
     createGoal: createGoalMutation.mutate,
+
     getTotalBalance: () => (accountsQuery.data || []).reduce((sum, acc) => sum + acc.balance, 0),
     getTotalIncome: (month?: string) => {
       const txns = transactionsQuery.data || [];
