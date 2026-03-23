@@ -143,12 +143,20 @@ export default function Transactions() {
                       </td>
                       <td className="px-3 py-4">
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          <button onClick={() => handleEdit(tx)} className="p-1 rounded text-muted-foreground hover:text-primary">
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => deleteTransaction(tx.id)} className="p-1 rounded text-muted-foreground hover:text-destructive">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {tx.id > 0 ? (
+                            <>
+                              <button onClick={() => handleEdit(tx)} className="p-1 rounded text-muted-foreground hover:text-primary">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button onClick={() => deleteTransaction(tx.id)} className="p-1 rounded text-muted-foreground hover:text-destructive">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground font-medium px-2 py-1 bg-muted rounded-md">
+                              Projetado
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>

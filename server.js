@@ -1135,16 +1135,20 @@ app.delete('/api/transactions/:id', async (req, res) => {
       }
     }
 
-    // Se tiver parent_id, pode ser parte de um parcelamento. 
-    // Por simplicidade, vamos deletar apenas a transação específica solicitada.
+    // Se a transação for um 'pai' (primeira parcela), precisamos limpar a referência nas 'filhas'
+    // para não violar a constraint de chave estrangeira antes de deletar.
+    await pool.query('UPDATE transactions SET parent_id = NULL WHERE parent_id = $1 AND user_id = $2', [id, userId]);
+
+    // Agora podemos deletar a transação específica
     await pool.query('DELETE FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
     
     await pool.query('COMMIT');
     res.json({ message: 'Deletada com sucesso' });
   } catch (err) {
     console.error('[ERROR DELETE /api/transactions/:id]:', err.message);
+    console.error('[DETAIL]:', err.detail);
     await pool.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: `Erro ao deletar transação: ${err.message}` });
   }
 });
 
