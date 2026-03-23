@@ -302,7 +302,10 @@ const deleteTransaction = async (id: number): Promise<void> => {
     headers: getAuthHeaders(false),
   });
   await handleUnauthorized(res);
-  if (!res.ok) throw new Error('Failed to delete transaction');
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || errorData.message || 'Failed to delete transaction');
+  }
 };
 
 const fetchCreditCards = async (): Promise<CreditCard[]> => {

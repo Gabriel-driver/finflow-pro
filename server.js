@@ -340,14 +340,15 @@ async function processRecurringRules() {
     console.log(`[RECURRING] Found ${rules.length} rules to process`);
     
     for (const rule of rules) {
-      await pool.query('BEGIN');
+      const client = await pool.connect();
       try {
+        await client.query('BEGIN');
         const transactionDate = new Date();
         transactionDate.setDate(rule.recurring_day);
         const dateStr = transactionDate.toISOString().split('T')[0];
         
         // Insert transaction
-        await pool.query(
+        await client.query(
           `INSERT INTO transactions 
            (user_id, account_id, credit_card_id, type, amount, category, description, date, recurring, recurring_day)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)`,
@@ -357,28 +358,30 @@ async function processRecurringRules() {
         // Update balance
         if (rule.account_id) {
           const balanceChange = rule.type === 'income' ? rule.amount : -rule.amount;
-          await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2', [balanceChange, rule.account_id]);
+          await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2', [balanceChange, rule.account_id]);
         } else if (rule.credit_card_id) {
-          await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2', [rule.amount, rule.credit_card_id]);
+          await client.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2', [rule.amount, rule.credit_card_id]);
         }
         
         // Update rule
-        await pool.query(
+        await client.query(
           'UPDATE recurring_rules SET last_processed_month = $1 WHERE id = $2',
           [currentMonth, rule.id]
         );
 
         // Add notification
-        await pool.query(
+        await client.query(
           'INSERT INTO notifications (user_id, title, message, type) VALUES ($1, $2, $3, $4)',
           [rule.user_id, 'Conta Recorrente Processada', `A conta "${rule.description}" de R$ ${rule.amount.toFixed(2)} foi lançada automaticamente.`, 'success']
         );
         
-        await pool.query('COMMIT');
+        await client.query('COMMIT');
         console.log(`[RECURRING] Processed rule: ${rule.description} for user ${rule.user_id}`);
       } catch (err) {
-        await pool.query('ROLLBACK');
+        await client.query('ROLLBACK');
         console.error(`[RECURRING] Error processing rule ${rule.id}:`, err);
+      } finally {
+        client.release();
       }
     }
     
@@ -911,8 +914,9 @@ app.post('/api/transactions', async (req, res) => {
     return;
   }
   
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
+    await client.query('BEGIN');
     
     const numInstallments = installments ? parseInt(installments) : 1;
     const results = [];
@@ -931,7 +935,7 @@ app.post('/api/transactions', async (req, res) => {
         ? `${description} (${current_installment}/${numInstallments})`
         : description;
 
-      const result = await pool.query(
+      const result = await client.query(
         'INSERT INTO transactions (user_id, account_id, credit_card_id, type, amount, category, description, date, installments, current_installment, parent_id, recurring, recurring_day) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
         [userId, final_account_id, final_credit_card_id, type, final_amount, category, installmentDescription, dateStr, numInstallments, current_installment, currentParentId, final_recurring, final_recurring_day]
       );
@@ -943,36 +947,34 @@ app.post('/api/transactions', async (req, res) => {
         currentParentId = newTx.id;
         // Update the first one to set itself as parent if it has installments
         if (numInstallments > 1) {
-          await pool.query('UPDATE transactions SET parent_id = $1 WHERE id = $1', [newTx.id]);
+          await client.query('UPDATE transactions SET parent_id = $1 WHERE id = $1', [newTx.id]);
           newTx.parent_id = newTx.id;
         }
 
         // Only update balance for the FIRST installment (or if it's not a credit card)
-        // Usually, credit card transactions deduct from limit immediately, but 
-        // for "account" transactions, we only deduct the first one now? 
-        // Actually, if it's an account expense, usually it's a "scheduled" future launch.
-        // Let's only update balance for the FIRST installment if it's today or past.
         const today = new Date().toISOString().split('T')[0];
         if (dateStr <= today) {
           if (final_account_id) {
             const balanceChange = type === 'income' ? final_amount : -final_amount;
-            await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
+            await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
           } else if (final_credit_card_id) {
-            await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [final_amount, final_credit_card_id, userId]);
+            await client.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [final_amount, final_credit_card_id, userId]);
           }
         }
       } else {
         // Update parent_id for subsequent installments
-        await pool.query('UPDATE transactions SET parent_id = $1 WHERE id = $2', [currentParentId, newTx.id]);
+        await client.query('UPDATE transactions SET parent_id = $1 WHERE id = $2', [currentParentId, newTx.id]);
       }
     }
     
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
     res.json(results[0]);
   } catch (err) {
     console.error('[ERROR] Erro ao processar transação:', err);
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1026,12 +1028,13 @@ app.put('/api/transactions/:id', async (req, res) => {
     return res.json(mockTransactions[index]);
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
+    await client.query('BEGIN');
     
-    const oldTxRes = await pool.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    const oldTxRes = await client.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
     if (oldTxRes.rows.length === 0) {
-      await pool.query('ROLLBACK');
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Transação não encontrada' });
     }
     const oldTx = oldTxRes.rows[0];
@@ -1043,15 +1046,15 @@ app.put('/api/transactions/:id', async (req, res) => {
     if (oldTxDate <= today) {
       if (oldTx.account_id) {
         const balanceChange = oldTx.type === 'income' ? -oldAmount : oldAmount;
-        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, oldTx.account_id, userId]);
+        await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, oldTx.account_id, userId]);
       } else if (oldTx.credit_card_id) {
-        await pool.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [oldAmount, oldTx.credit_card_id, userId]);
+        await client.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [oldAmount, oldTx.credit_card_id, userId]);
       }
     }
 
     // Update transaction
     const finalAmount = parseFloat(amount);
-    const result = await pool.query(
+    const result = await client.query(
       'UPDATE transactions SET account_id = $1, credit_card_id = $2, type = $3, amount = $4, category = $5, description = $6, date = $7 WHERE id = $8 AND user_id = $9 RETURNING *',
       [final_account_id, final_credit_card_id, type, finalAmount, category, description, date, id, userId]
     );
@@ -1061,26 +1064,29 @@ app.put('/api/transactions/:id', async (req, res) => {
     if (newTxDate <= today) {
       if (final_account_id) {
         const balanceChange = type === 'income' ? finalAmount : -finalAmount;
-        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
+        await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, final_account_id, userId]);
       } else if (final_credit_card_id) {
-        await pool.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [finalAmount, final_credit_card_id, userId]);
+        await client.query('UPDATE credit_cards SET used = used + $1 WHERE id = $2 AND user_id = $3', [finalAmount, final_credit_card_id, userId]);
       }
     }
 
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
 app.delete('/api/transactions/:id', async (req, res) => {
   const userId = getUserId(req);
   const { id } = req.params;
+  const transactionId = parseInt(id);
 
   if (!pool) {
-    const index = mockTransactions.findIndex(t => t.id === parseInt(id) && t.user_id === userId);
+    const index = mockTransactions.findIndex(t => t.id === transactionId && t.user_id === userId);
     if (index === -1) return res.status(404).json({ error: 'Transação não encontrada' });
     
     const tx = mockTransactions[index];
@@ -1099,7 +1105,6 @@ app.delete('/api/transactions/:id', async (req, res) => {
       } else if (tx.credit_card_id) {
         const card = mockCreditCards.find(c => c.id === tx.credit_card_id);
         if (card) {
-          // No cartão de crédito, despesas aumentam o 'used', então remover diminui o 'used'
           card.used -= txAmount;
         }
       }
@@ -1109,46 +1114,68 @@ app.delete('/api/transactions/:id', async (req, res) => {
     return res.json({ message: 'Deletado com sucesso' });
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
+    await client.query('BEGIN');
     
     // Buscar a transação antes de deletar para saber o que reverter
-    const txRes = await pool.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    const txRes = await client.query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [transactionId, userId]);
     if (txRes.rows.length === 0) {
-      await pool.query('ROLLBACK');
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Transação não encontrada' });
     }
     
     const tx = txRes.rows[0];
-    const today = new Date().toISOString().split('T')[0];
-    const txDate = new Date(tx.date).toISOString().split('T')[0];
-    const txAmount = parseFloat(tx.amount);
+    
+    // Comparação de data segura: extrair apenas YYYY-MM-DD ignorando timezone
+    const txDateStr = tx.date instanceof Date 
+      ? tx.date.toISOString().split('T')[0] 
+      : String(tx.date).split('T')[0];
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const txAmount = parseFloat(tx.amount || 0);
+
+    console.log(`[DELETE] Revertendo: ${tx.description}, Data: ${txDateStr}, Hoje: ${todayStr}, Valor: ${txAmount}`);
 
     // Reverter saldo/limite se a data for hoje ou no passado
-    if (txDate <= today) {
+    if (txDateStr <= todayStr) {
       if (tx.account_id) {
         const balanceChange = tx.type === 'income' ? -txAmount : txAmount;
-        await pool.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, tx.account_id, userId]);
+        await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3', [balanceChange, tx.account_id, userId]);
       } else if (tx.credit_card_id) {
-        // No cartão de crédito, o valor gasto é positivo em 'used'. Remover transação diminui o 'used'.
-        await pool.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [txAmount, tx.credit_card_id, userId]);
+        await client.query('UPDATE credit_cards SET used = used - $1 WHERE id = $2 AND user_id = $3', [txAmount, tx.credit_card_id, userId]);
       }
     }
 
-    // Se a transação for um 'pai' (primeira parcela), precisamos limpar a referência nas 'filhas'
-    // para não violar a constraint de chave estrangeira antes de deletar.
-    await pool.query('UPDATE transactions SET parent_id = NULL WHERE parent_id = $1 AND user_id = $2', [id, userId]);
+    // 1. Limpar referências de parent_id em toda a tabela para este ID
+    // Isso "orfana" as parcelas seguintes para que possamos apagar a primeira sem erro de Foreign Key.
+    const updateRes = await client.query(
+      'UPDATE transactions SET parent_id = NULL WHERE parent_id = $1', 
+      [transactionId]
+    );
+    if (updateRes.rowCount > 0) {
+      console.log(`[DELETE] ${updateRes.rowCount} transações filhas foram desconectadas do pai ${transactionId}`);
+    }
 
-    // Agora podemos deletar a transação específica
-    await pool.query('DELETE FROM transactions WHERE id = $1 AND user_id = $2', [id, userId]);
+    // 2. Deletar a transação propriamente dita
+    const deleteRes = await client.query(
+      'DELETE FROM transactions WHERE id = $1 AND user_id = $2 RETURNING id', 
+      [transactionId, userId]
+    );
     
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
+    console.log(`[DELETE] Sucesso: ID ${transactionId}`);
     res.json({ message: 'Deletada com sucesso' });
   } catch (err) {
     console.error('[ERROR DELETE /api/transactions/:id]:', err.message);
-    console.error('[DETAIL]:', err.detail);
-    await pool.query('ROLLBACK');
-    res.status(500).json({ error: `Erro ao deletar transação: ${err.message}` });
+    await client.query('ROLLBACK');
+    res.status(500).json({ 
+      error: 'Erro interno ao deletar transação',
+      message: err.message,
+      detail: err.detail
+    });
+  } finally {
+    client.release();
   }
 });
 
