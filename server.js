@@ -15,12 +15,14 @@ import { Pool } from 'pg';
 import { promises as fs } from 'fs';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
-import pdf from 'pdf-parse';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import xss from 'xss-clean';
 import hpp from 'hpp';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse/lib/pdf-parse.js');
 
 dotenv.config();
 
@@ -38,18 +40,18 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // Limit 5MB
 });
 
-// Security Middleware
+// Middleware
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.ALLOWED_ORIGIN : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json({ limit: '10kb' })); // Limit body size to 10kb
+
+// Security Middleware (MUST be after express.json to sanitize body)
 app.use(helmet()); // Secure HTTP headers
 
-// Rate limiting to prevent brute-force
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Muitas requisições vindas deste IP, tente novamente em 15 minutos.'
-});
-app.use('/api/', limiter);
-
-// Data sanitization against NoSQL injection (if using mongo, but good practice anyway)
+// Data sanitization against NoSQL injection
 app.use(mongoSanitize());
 
 // Data sanitization against XSS
@@ -58,13 +60,13 @@ app.use(xss());
 // Prevent HTTP Parameter Pollution
 app.use(hpp());
 
-// Middleware
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? process.env.ALLOWED_ORIGIN : '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.use(express.json({ limit: '10kb' })); // Limit body size to 10kb
+// Rate limiting to prevent brute-force
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Muitas requisições vindas deste IP, tente novamente em 15 minutos.'
+});
+app.use('/api/', limiter);
 
 // Serve static files from the React app build directory
 app.use(express.static(path.join(__dirname, 'dist')));
