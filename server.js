@@ -16,6 +16,11 @@ import { promises as fs } from 'fs';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
 import pdf from 'pdf-parse';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import mongoSanitize from 'express-mongo-sanitize';
+import xss from 'xss-clean';
+import hpp from 'hpp';
 
 dotenv.config();
 
@@ -28,11 +33,38 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h';
 
 // Multer config for file uploads
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // Limit 5MB
+});
+
+// Security Middleware
+app.use(helmet()); // Secure HTTP headers
+
+// Rate limiting to prevent brute-force
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Muitas requisições vindas deste IP, tente novamente em 15 minutos.'
+});
+app.use('/api/', limiter);
+
+// Data sanitization against NoSQL injection (if using mongo, but good practice anyway)
+app.use(mongoSanitize());
+
+// Data sanitization against XSS
+app.use(xss());
+
+// Prevent HTTP Parameter Pollution
+app.use(hpp());
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.ALLOWED_ORIGIN : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json({ limit: '10kb' })); // Limit body size to 10kb
 
 // Serve static files from the React app build directory
 app.use(express.static(path.join(__dirname, 'dist')));
