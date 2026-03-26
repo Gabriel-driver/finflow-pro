@@ -15,6 +15,7 @@ import { Pool } from 'pg';
 import { promises as fs } from 'fs';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
+import pdf from 'pdf-parse';
 
 dotenv.config();
 
@@ -1645,33 +1646,152 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
   }
 
   try {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
-    const worksheet = workbook.getWorksheet(1);
+    let rows = [];
+    const filename = req.file.originalname.toLowerCase();
+
+    if (filename.endsWith('.xlsx')) {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.getWorksheet(1);
+      
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+          const rowData = {
+            date: row.getCell(1).value,
+            description: row.getCell(2).value,
+            category: row.getCell(3).value,
+            type: row.getCell(4).value,
+            amount: row.getCell(5).value,
+            account: row.getCell(6).value,
+            notes: row.getCell(7).value,
+          };
+          if (rowData.date && rowData.amount) {
+            rows.push(rowData);
+          }
+        }
+      });
+    } else if (filename.endsWith('.pdf')) {
+      const data = await pdf(req.file.buffer);
+      const text = data.text;
+      
+      // --- SISTEMA DE PARSERS POR BANCO ---
+      if (text.includes('Nubank') || text.includes('Nu Pagamentos')) {
+        // Parser Nubank (Cartão)
+        const lines = text.split('\n');
+        let currentYear = new Date().getFullYear();
+        const yearMatch = text.match(/\d{2} [A-Z]{3} (\d{4})/);
+        if (yearMatch) currentYear = parseInt(yearMatch[1]);
+
+        const monthsMap = {
+          'JAN': '01', 'FEV': '02', 'MAR': '03', 'ABR': '04', 'MAI': '05', 'JUN': '06',
+          'JUL': '07', 'AGO': '08', 'SET': '09', 'OUT': '10', 'NOV': '11', 'DEZ': '12'
+        };
+
+        let inTransactionsSection = false;
+        let lastDate = null;
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (trimmedLine === 'TRANSAÇÕES') {
+            inTransactionsSection = true;
+            continue;
+          }
+          if (inTransactionsSection) {
+            const dateMatch = trimmedLine.match(/^(\d{2}) ([A-Z]{3})$/);
+            if (dateMatch) {
+              lastDate = `${currentYear}-${monthsMap[dateMatch[2]]}-${dateMatch[1]}`;
+              continue;
+            }
+            if (lastDate && trimmedLine.includes('R$')) {
+              const amountMatch = trimmedLine.match(/R\$\s*([\d.,-]+)$/);
+              if (amountMatch) {
+                const rawAmount = amountMatch[1].replace('.', '').replace(',', '.');
+                const amount = parseFloat(rawAmount);
+                const description = trimmedLine.replace(/•••• \d{4}/, '').replace(/R\$\s*[\d.,-]+$/, '').trim();
+                
+                if (description && !description.startsWith('Pagamento em') && !description.startsWith('Pagamentos')) {
+                  rows.push({
+                    date: lastDate,
+                    description,
+                    category: 'Outros',
+                    type: amount < 0 ? 'income' : 'expense',
+                    amount: Math.abs(amount),
+                    account: 'Nubank'
+                  });
+                }
+              }
+            }
+          }
+        }
+      } else if (text.includes('Itaú') || text.includes('ITAU')) {
+        // Estrutura para Itaú (Exemplo de lógica genérica)
+        const lines = text.split('\n');
+        for (const line of lines) {
+          // Lógica: Data (DD/MM) + Descrição + Valor
+          const itauMatch = line.match(/^(\d{2}\/\d{2})\s+(.+?)\s+([\d.,-]+)$/);
+          if (itauMatch) {
+            const [_, dateShort, description, amountRaw] = itauMatch;
+            const amount = parseFloat(amountRaw.replace('.', '').replace(',', '.'));
+            const currentYear = new Date().getFullYear();
+            const [day, month] = dateShort.split('/');
+            rows.push({
+              date: `${currentYear}-${month}-${day}`,
+              description: description.trim(),
+              category: 'Outros',
+              type: amount > 0 ? 'income' : 'expense',
+              amount: Math.abs(amount),
+              account: 'Itaú'
+            });
+          }
+        }
+      } else if (text.includes('Bradesco') || text.includes('BRADESCO')) {
+        // Estrutura para Bradesco
+        const lines = text.split('\n');
+        for (const line of lines) {
+          const bradescoMatch = line.match(/^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d.,-]+)$/);
+          if (bradescoMatch) {
+            const [_, dateFull, description, amountRaw] = bradescoMatch;
+            const amount = parseFloat(amountRaw.replace('.', '').replace(',', '.'));
+            const [day, month, year] = dateFull.split('/');
+            rows.push({
+              date: `${year}-${month}-${day}`,
+              description: description.trim(),
+              category: 'Outros',
+              type: amount > 0 ? 'income' : 'expense',
+              amount: Math.abs(amount),
+              account: 'Bradesco'
+            });
+          }
+        }
+      } else if (text.includes('Banco do Brasil') || text.includes('BANCO DO BRASIL')) {
+        // Estrutura para Banco do Brasil
+        const lines = text.split('\n');
+        for (const line of lines) {
+          const bbMatch = line.match(/^(\d{2}\.\d{2}\.\d{4})\s+(.+?)\s+([\d.,-]+)\s*([CD])$/);
+          if (bbMatch) {
+            const [_, dateFull, description, amountRaw, signal] = bbMatch;
+            const amount = parseFloat(amountRaw.replace('.', '').replace(',', '.'));
+            const [day, month, year] = dateFull.split('.');
+            rows.push({
+              date: `${year}-${month}-${day}`,
+              description: description.trim(),
+              category: 'Outros',
+              type: signal === 'C' ? 'income' : 'expense',
+              amount: Math.abs(amount),
+              account: 'Banco do Brasil'
+            });
+          }
+        }
+      } else {
+        return res.status(400).json({ error: 'Banco não identificado no PDF. No momento suportamos Nubank, Itaú, Bradesco e BB.' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Formato de arquivo não suportado. Use .xlsx ou .pdf (Nubank).' });
+    }
     
     let success = 0;
     let failed = 0;
     const errors = [];
-
-    // Skip header row
-    const rows = [];
-    worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 1) {
-        const rowData = {
-          date: row.getCell(1).value,
-          description: row.getCell(2).value,
-          category: row.getCell(3).value,
-          type: row.getCell(4).value,
-          amount: row.getCell(5).value,
-          account: row.getCell(6).value,
-          notes: row.getCell(7).value,
-        };
-        // Basic validation: skip empty rows
-        if (rowData.date && rowData.amount) {
-          rows.push(rowData);
-        }
-      }
-    });
 
     for (const rowData of rows) {
       try {
@@ -1681,7 +1801,6 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
         if (date instanceof Date) {
           date = date.toISOString().split('T')[0];
         } else if (typeof date === 'string') {
-          // simple check for yyyy-mm-dd
           if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             throw new Error(`Data inválida: ${date}`);
           }
@@ -1701,28 +1820,25 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
         }
 
         if (pool) {
-          // 1. Get or Create Account
           let accountId;
-          const accountRes = await pool.query('SELECT id FROM accounts WHERE user_id = $1 AND name = $2', [userId, account]);
+          const accountRes = await pool.query('SELECT id FROM accounts WHERE user_id = $1 AND name = $2', [userId, account || 'Principal']);
           if (accountRes.rows.length > 0) {
             accountId = accountRes.rows[0].id;
           } else {
             const newAcc = await pool.query(
               'INSERT INTO accounts (user_id, name, balance, icon, color, type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-              [userId, account, 0, '💳', 'hsl(var(--primary))', 'checking']
+              [userId, account || 'Principal', 0, '💳', 'hsl(var(--primary))', 'checking']
             );
             accountId = newAcc.rows[0].id;
           }
 
-          // 2. Insert Transaction
           await pool.query(
             'INSERT INTO transactions (user_id, account_id, type, amount, category, description, date) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [userId, accountId, type, amount, category, description, date]
+            [userId, accountId, type, amount, category || 'Outros', description, date]
           );
         } else {
-          // Mock data fallback
           let accountId;
-          const existingAcc = mockAccounts.find(a => a.user_id === userId && a.name === account);
+          const existingAcc = mockAccounts.find(a => a.user_id === userId && a.name === (account || 'Principal'));
           if (existingAcc) {
             accountId = existingAcc.id;
           } else {
@@ -1730,7 +1846,7 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
             mockAccounts.push({
               id: accountId,
               user_id: userId,
-              name: account,
+              name: account || 'Principal',
               balance: 0,
               icon: "💳",
               color: "hsl(var(--primary))",
@@ -1744,7 +1860,7 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
             account_id: accountId,
             type,
             amount,
-            category,
+            category: category || 'Outros',
             description,
             date
           });
@@ -1752,15 +1868,15 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
         success++;
       } catch (err) {
         failed++;
-        errors.push(`Erro na linha: ${err.message}`);
+        errors.push(`Erro na linha/transação: ${err.message}`);
       }
     }
 
-    addLog('INFO', `Importação concluída: ${success} sucesso, ${failed} falha`, req.user.username);
+    addLog('INFO', `Importação concluída: ${success} sucesso, ${failed} falha`, req.user?.username || 'unknown');
     res.json({ success, failed, errors });
   } catch (error) {
     console.error('[ERROR] Erro ao processar importação:', error);
-    res.status(500).json({ error: 'Erro ao processar o arquivo Excel' });
+    res.status(500).json({ error: 'Erro ao processar o arquivo: ' + error.message });
   }
 });
 

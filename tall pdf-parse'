@@ -1,0 +1,29 @@
+[33mcommit 0ac2ff101d9b7988e9188a49915f785f9b9157ed[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Gabriel Driver <gabriel.driver@example.com>
+Date:   Mon Mar 23 15:47:55 2026 -0300
+
+    fix: correção definitiva de deleção de transações com chaves estrangeiras e integridade de dados
+
+[33mcommit 6826a6cc10b1cdceea4e7df007ea8a563220afb1[m
+Author: Gabriel Driver <gabriel.driver@example.com>
+Date:   Mon Mar 23 15:35:35 2026 -0300
+
+    fix: deleção de transações projetadas e tratamento de chaves estrangeiras
+
+[33mcommit 29263099bd68b797735146c616876aa3ecabb4dd[m
+Author: Gabriel Driver <gabriel.driver@example.com>
+Date:   Mon Mar 23 15:33:32 2026 -0300
+
+    feat: melhorias no sistema de transações, metas, faturas e notificações
+
+[33mcommit 86b2269b4171ddd21fd2f0ebbaa944eefda56744[m
+Author: Gabriel Driver <gabriel.driver@example.com>
+Date:   Mon Mar 23 09:57:55 2026 -0300
+
+    fix: corrige erro de mutations no FinanceProvider
+
+[33mcommit 26d66643b7ed73c063e39514305882a0e6de5e85[m
+Author: Gabriel Driver <gabriel.driver@example.com>
+Date:   Mon Mar 23 08:24:28 2026 -0300
+
+    fix: corrige roteamento SPA no Vercel

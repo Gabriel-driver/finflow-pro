@@ -67,12 +67,12 @@ export function ImportDataModal({ open, onClose, onSuccess }: { open: boolean; o
         <DialogHeader>
           <DialogTitle>Importar Dados</DialogTitle>
           <DialogDescription>
-            Baixe o modelo de planilha, preencha e envie para importar seus dados.<br />
+            Baixe o modelo de planilha ou envie seu PDF do <b>Nubank, Itaú, Bradesco ou BB</b>.<br />
             <Button variant="link" onClick={handleDownloadTemplate} className="px-0 text-primary underline">Baixar modelo de planilha</Button>
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
-          <input type="file" accept=".xlsx,.csv" onChange={handleFileChange} disabled={uploading} />
+          <input type="file" accept=".xlsx,.csv,.pdf" onChange={handleFileChange} disabled={uploading} />
           {progress > 0 && <Progress value={progress} className="h-2" />}
           {error && <div className="text-destructive text-sm">{error}</div>}
           {result && (

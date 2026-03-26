@@ -65,6 +65,7 @@
     "next-themes": "^0.3.0",
     "node-ofx-parser": "^0.5.1",
     "papaparse": "^5.5.3",
+    "pdf-parse": "^1.1.1",
     "pg": "^8.20.0",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
